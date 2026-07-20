@@ -117,11 +117,11 @@ async function runWizard() {
 
   // Step 4: Trigger marker
   const markerAnswer = await prompt(rl, '  Trigger marker [;;]: ');
-  const marker = markerAnswer.trim() === '' ? ';;' : markerAnswer;
+  const marker = markerAnswer.trim() || ';;';
 
   // Step 5: Timeout seconds
   const timeoutAnswer = await prompt(rl, '  Timeout seconds [8]: ');
-  const timeoutSeconds = timeoutAnswer.trim() === '' ? 8 : parseInt(timeoutAnswer, 10);
+  const timeoutSeconds = timeoutAnswer.trim() === '' ? 8 : (parseInt(timeoutAnswer, 10) || 8);
 
   rl.close();
 
