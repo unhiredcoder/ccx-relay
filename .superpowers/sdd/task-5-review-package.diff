@@ -1,0 +1,350 @@
+diff --git a/bin/ccx.js b/bin/ccx.js
+index caec170..0cc496a 100644
+--- a/bin/ccx.js
++++ b/bin/ccx.js
+@@ -1,256 +1,105 @@
+ #!/usr/bin/env node
+-
+ 'use strict';
+ 
+-const path = require('path');
+-
+-require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
++import { load } from '../src/config.js';
++import { enhance, RateLimitError, AuthError, ModelError, TimeoutError, NetworkError } from '../src/gemini.js';
++import { start as spinnerStart, stop as spinnerStop, clear as spinnerClear } from '../src/ui.js';
++import { createInputHandler } from '../src/input.js';
+ 
+ let pty;
+ try {
+-  pty = require('node-pty');
++  pty = (await import('node-pty')).default;
+ } catch (err) {
+   process.stderr.write(
+-    '[ccx] Failed to load node-pty. On Windows this usually means the native\n' +
+-    'module could not be built. Install the "Desktop development with C++"\n' +
+-    'workload (Visual Studio Build Tools) and Python, then run:\n' +
+-    '  npm rebuild node-pty\n' +
++    '[ccx] Failed to load node-pty. On Windows install "Desktop development with C++"\n' +
++    'workload (Visual Studio Build Tools) and Python, then run: npm rebuild node-pty\n' +
+     `Original error: ${err.message}\n`
+   );
+   process.exit(1);
+ }
+ 
+-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+-const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.5-flash';
+-const MARKER = process.env.CCX_MARKER || ';;';
++const config = load();
+ 
+-if (!GEMINI_API_KEY) {
+-  process.stderr.write(
+-    '[ccx] GEMINI_API_KEY is not set.\n' +
+-    `Create a .env file at ${path.join(__dirname, '..', '.env')} (copy .env.example)\n` +
+-    'and set GEMINI_API_KEY=your-key-here.\n'
+-  );
++if (!config.geminiApiKey) {
++  process.stderr.write('[ccx] No API key found. Run `ccx init` to set up.\n');
+   process.exit(1);
+ }
+ 
+ if (!process.stdin.isTTY || !process.stdout.isTTY) {
+   process.stderr.write('[ccx] ccx must be run in an interactive terminal.\n');
+   process.exit(1);
+ }
+ 
+-const argv = process.argv.slice(2);
++const argv      = process.argv.slice(2);
+ const targetCmd = argv[0] || 'claude';
+-const targetArgs = argv.slice(1);
++const targetArgs= argv.slice(1);
+ 
+ const isWindows = process.platform === 'win32';
+-let shellFile;
+-let shellArgs;
+-if (isWindows) {
+-  // node-pty spawns via CreateProcess directly, which cannot execute .cmd/.bat
+-  // shims (e.g. the "claude" launcher installed by npm on Windows) without
+-  // going through cmd.exe. Route everything through cmd.exe /c.
+-  shellFile = process.env.COMSPEC || 'cmd.exe';
+-  shellArgs = ['/d', '/s', '/c', [targetCmd, ...targetArgs].join(' ')];
+-} else {
+-  shellFile = targetCmd;
+-  shellArgs = targetArgs;
+-}
++const shellFile = isWindows ? (process.env.COMSPEC || 'cmd.exe') : targetCmd;
++const shellArgs = isWindows ? ['/d', '/s', '/c', [targetCmd, ...targetArgs].join(' ')] : targetArgs;
+ 
+ const ptyProcess = pty.spawn(shellFile, shellArgs, {
+   name: 'xterm-color',
+   cols: process.stdout.columns || 80,
+-  rows: process.stdout.rows || 24,
+-  cwd: process.cwd(),
+-  env: process.env
++  rows: process.stdout.rows   || 24,
++  cwd:  process.cwd(),
++  env:  process.env,
+ });
+ 
+-ptyProcess.onData((data) => {
+-  process.stdout.write(data);
+-});
++ptyProcess.onData(data => process.stdout.write(data));
+ 
+ process.stdout.on('resize', () => {
+   ptyProcess.resize(process.stdout.columns, process.stdout.rows);
+ });
+ 
+ process.stdin.setRawMode(true);
+ process.stdin.resume();
+ 
+-let lineBuffer = '';
+-let busy = false;
+-
+-function writeStatus(msg) {
+-  process.stderr.write('\x1b[s\r\n\x1b[2K' + msg + '\x1b[u');
+-}
+-
+-function clearStatus() {
+-  process.stderr.write('\x1b[s\r\n\x1b[2K\x1b[u');
+-}
+-
+-async function callGemini(text) {
+-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
+-  const prompt =
+-    'Rewrite the following text to be grammatically correct and clearer, ' +
+-    'while preserving its original intent and meaning exactly. ' +
+-    'This is a single line typed into a terminal prompt, not a chat message - ' +
+-    'respond with EXACTLY ONE rewritten version as a single plain-text line. ' +
+-    'Do not offer multiple options or alternatives. Do not add headings, bullet ' +
+-    'points, markdown formatting, quotes, explanations, or any commentary. ' +
+-    'Output must contain nothing but the rewritten line itself.\n\nText:\n' + text;
+-
+-  const res = await fetch(url, {
+-    method: 'POST',
+-    headers: {
+-      'Content-Type': 'application/json',
+-      'x-goog-api-key': GEMINI_API_KEY
+-    },
+-    body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
+-  });
+-
+-  if (!res.ok) {
+-    const errBody = await res.text();
+-    throw new Error(`Gemini API error ${res.status}: ${errBody.slice(0, 300)}`);
+-  }
+-
+-  const data = await res.json();
+-  const candidate = data.candidates && data.candidates[0];
+-  const parts = candidate && candidate.content && candidate.content.parts;
+-  const result = parts && parts.map((p) => p.text || '').join('').trim();
+-
+-  if (!result) {
+-    throw new Error('Gemini returned an empty response');
+-  }
+-  return result;
+-}
+-
+-async function triggerEnhance() {
+-  const original = lineBuffer;
+-  const toSend = original.slice(0, -MARKER.length);
+-  busy = true;
+-  writeStatus('[ccx] enhancing...');
+-  try {
+-    const improved = await callGemini(toSend);
+-    if (original.length > 0) {
+-      ptyProcess.write(Buffer.alloc(original.length, 0x7f));
+-    }
+-    ptyProcess.write(improved);
+-    lineBuffer = improved;
+-  } catch (err) {
+-    process.stderr.write(`\r\n[ccx] Gemini error: ${err.message}\r\n`);
+-  } finally {
+-    clearStatus();
+-    busy = false;
+-  }
+-}
+-
+-// Windows Terminal / ConPTY "win32-input-mode": CSI Vk;Sc;Uc;Kd;Cs;Rc _
+-// Some CLIs (Claude Code included) enable this for full key fidelity
+-// (e.g. to distinguish Enter from Shift+Enter). Once enabled, the real
+-// host terminal encodes keys - Enter included - this way instead of as
+-// bare bytes, so it has to be decoded to recognize a logical Enter press.
+-function parseWin32InputSeq(chunk, i) {
+-  if (chunk[i + 1] !== 0x5b) {
+-    return null;
+-  }
+-  let j = i + 2;
+-  const start = j;
+-  while (j < chunk.length && ((chunk[j] >= 0x30 && chunk[j] <= 0x39) || chunk[j] === 0x3b)) {
+-    j++;
+-  }
+-  if (j >= chunk.length || chunk[j] !== 0x5f || j === start) {
+-    return null;
+-  }
+-  const parts = chunk.slice(start, j).toString('ascii').split(';').map(Number);
+-  if (parts.length !== 6 || parts.some(Number.isNaN)) {
+-    return null;
+-  }
+-  const [vk, sc, uc, kd, cs, rc] = parts;
+-  return { consumed: j + 1 - i, vk, sc, uc, kd, cs, rc };
+-}
+-
+-function processChunk(chunk) {
+-  let i = 0;
+-  while (i < chunk.length) {
+-    const byte = chunk[i];
+-
+-    if (byte === 0x1b) {
+-      const seq = parseWin32InputSeq(chunk, i);
+-      if (seq) {
+-        if (seq.vk === 13 && seq.kd === 1) {
+-          // Logical Enter key-down, win32-input-mode encoded.
+-          if (lineBuffer.endsWith(MARKER) && lineBuffer.trim().length > MARKER.length) {
+-            triggerEnhance();
+-            return;
+-          }
+-          lineBuffer = '';
+-        } else if (seq.vk === 8 && seq.kd === 1) {
+-          // Logical Backspace key-down, win32-input-mode encoded.
+-          if (lineBuffer.length > 0) {
+-            lineBuffer = lineBuffer.slice(0, -1);
+-          }
+-        }
+-        ptyProcess.write(chunk.slice(i, i + seq.consumed));
+-        i += seq.consumed;
+-        continue;
+-      }
+-      // Regular escape sequence (arrow keys, mouse, etc). Forward the
+-      // remainder of this chunk untouched; do not track it in the buffer.
+-      ptyProcess.write(chunk.slice(i));
++const handler = createInputHandler({
++  marker: config.marker,
++
++  onEnhance: async (line) => {
++    handler.setBusy(true);
++    spinnerStart();
++    let improved;
++    try {
++      improved = await enhance(line, config);
++    } catch (err) {
++      let msg = 'Enhancement failed';
++      if (err instanceof RateLimitError) msg = 'Quota exceeded';
++      else if (err instanceof AuthError)  msg = 'Invalid key — run ccx init';
++      else if (err instanceof ModelError) msg = 'Model not found — run ccx init';
++      else if (err instanceof TimeoutError) msg = `Timed out after ${config.timeoutSeconds}s — original restored`;
++      else if (err instanceof NetworkError) msg = 'No connection — original restored';
++      await spinnerStop('error', msg);
++      ptyProcess.write(line);
++      handler.setBusy(false);
+       return;
+     }
++    await spinnerStop('success', 'Enhanced');
++    ptyProcess.write(Buffer.alloc(line.length, 0x7f));
++    ptyProcess.write(improved);
++    handler.setBusy(false);
++  },
+ 
+-    if (byte === 13) {
+-      // Enter, sent as a bare byte (non-win32-input-mode terminals/children).
+-      if (lineBuffer.endsWith(MARKER) && lineBuffer.trim().length > MARKER.length) {
+-        triggerEnhance();
+-        return;
+-      }
+-      ptyProcess.write(Buffer.from([byte]));
+-      lineBuffer = '';
+-      i++;
+-      continue;
+-    }
+-
+-    if (byte === 3) {
+-      // Ctrl+C
+-      ptyProcess.write(Buffer.from([byte]));
+-      lineBuffer = '';
+-      i++;
+-      continue;
+-    }
+-
+-    if (byte === 127 || byte === 8) {
+-      // Backspace / Delete
+-      if (lineBuffer.length > 0) {
+-        lineBuffer = lineBuffer.slice(0, -1);
+-      }
+-      ptyProcess.write(Buffer.from([byte]));
+-      i++;
+-      continue;
+-    }
++  onSubmit: (_line) => {
++    // Enter already forwarded by input.js passthrough
++  },
+ 
+-    lineBuffer += String.fromCharCode(byte);
+-    ptyProcess.write(Buffer.from([byte]));
+-    i++;
+-  }
+-}
++  onPassthrough: (chunk) => ptyProcess.write(chunk),
+ 
+-process.stdin.on('data', (chunk) => {
+-  if (busy) {
+-    return;
+-  }
+-  processChunk(chunk);
++  onCtrlC: () => {
++    spinnerClear();
++    handler.reset();
++  },
+ });
+ 
++process.stdin.on('data', chunk => handler.processChunk(chunk));
++
+ function cleanupAndExit(code) {
+-  try {
+-    if (process.stdin.isTTY) {
+-      process.stdin.setRawMode(false);
+-    }
+-  } catch (_) {
+-    // ignore
+-  }
++  try { if (process.stdin.isTTY) process.stdin.setRawMode(false); } catch (_) {}
+   process.exit(code == null ? 0 : code);
+ }
+ 
+ ptyProcess.onExit(({ exitCode }) => cleanupAndExit(exitCode));
+ process.on('SIGINT', () => {});
+diff --git a/package.json b/package.json
+index edb24d5..1ab289c 100644
+--- a/package.json
++++ b/package.json
+@@ -1,26 +1,29 @@
+ {
+   "type": "module",
+   "name": "ccx-relay",
+   "version": "1.0.0",
+   "description": "Transparent PTY wrapper for Claude Code (or any CLI) that lets you refine your prompt with Gemini AI before submitting it, without leaving your terminal session.",
+   "main": "bin/ccx.js",
+   "bin": {
+-    "ccx": "bin/ccx.js"
++    "ccx": "bin/ccx.js",
++    "ccx-init": "bin/ccx-init.js"
+   },
+   "files": [
+     "bin",
++    "src",
+     "README.md",
+     ".env.example"
+   ],
+   "scripts": {
+-    "test": "node --check bin/ccx.js"
++    "test": "node --test test/**/*.test.js",
++    "prepublishOnly": "npm test"
+   },
+   "keywords": [
+     "cli",
+     "claude",
+     "claude-code",
+     "gemini",
+     "pty",
+     "terminal",
+     "ai",
+     "prompt-engineering"

@@ -1,0 +1,1393 @@
+diff --git a/.github/workflows/publish.yml b/.github/workflows/publish.yml
+new file mode 100644
+index 0000000..3fe9ecf
+--- /dev/null
++++ b/.github/workflows/publish.yml
+@@ -0,0 +1,21 @@
++name: Publish
++
++on:
++  push:
++    tags:
++      - 'v*'
++
++jobs:
++  publish:
++    runs-on: ubuntu-latest
++    steps:
++      - uses: actions/checkout@v4
++      - uses: actions/setup-node@v4
++        with:
++          node-version: 22
++          registry-url: 'https://registry.npmjs.org'
++      - run: npm ci
++      - run: npm test
++      - run: npm publish --access public
++        env:
++          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+diff --git a/.github/workflows/test.yml b/.github/workflows/test.yml
+new file mode 100644
+index 0000000..27f1614
+--- /dev/null
++++ b/.github/workflows/test.yml
+@@ -0,0 +1,21 @@
++name: Test
++
++on:
++  pull_request:
++  push:
++    branches: [main]
++
++jobs:
++  test:
++    strategy:
++      matrix:
++        node: [18, 20, 22]
++        os: [ubuntu-latest, windows-latest]
++    runs-on: ${{ matrix.os }}
++    steps:
++      - uses: actions/checkout@v4
++      - uses: actions/setup-node@v4
++        with:
++          node-version: ${{ matrix.node }}
++      - run: npm ci
++      - run: npm test
+diff --git a/README.md b/README.md
+index 5b8ad01..b2dd336 100644
+--- a/README.md
++++ b/README.md
+@@ -23,79 +23,72 @@ trying can already be spoken for by one of them. Plain typed text has no such co
+   September 2026). `ccx` sends the key via the `x-goog-api-key` header, which works for both key types.
+ - **Windows only:** `node-pty` is a native module and needs to be compiled during `npm install`. Make sure you have:
+   - Visual Studio Build Tools with the "Desktop development with C++" workload, and
+   - Python 3.x on your PATH.
+ 
+   If `npm install` fails while building `node-pty`, install the above and run `npm rebuild node-pty`.
+ 
+ ## Install
+ 
+ ```bash
+-git clone <this repo, or just use the folder you already have>
+-cd ccx
+-npm install
++npm install -g ccx-relay
+ ```
+ 
+-## Configure
++## Setup
+ 
+-`ccx` is a standalone global tool — its config lives with the package itself, never in your project folders.
++Run the one-time setup wizard:
+ 
+ ```bash
+-copy .env.example .env    # Windows
+-# cp .env.example .env    # macOS/Linux
++ccx init
+ ```
+ 
+-Edit `.env` (in this package's own folder) and set:
++This will prompt for your Gemini API key (get one at https://aistudio.google.com/apikey), validate it, let you pick a model, and save config to your user directory (`%APPDATA%\ccx\config.json` on Windows, `~/.config/ccx/config.json` on macOS/Linux). Config survives npm upgrades.
+ 
+-| Variable         | Required | Default              | Description                                                        |
+-|------------------|----------|-----------------------|----------------------------------------------------------------------|
+-| `GEMINI_API_KEY` | Yes      | —                     | Your Gemini API key.                                                |
+-| `GEMINI_MODEL`   | No       | `gemini-3.5-flash`    | Gemini model used to rewrite your prompt (must be a currently supported, non-deprecated model — check https://ai.google.dev/gemini-api/docs/pricing for the current free-tier list). |
+-| `CCX_MARKER`     | No       | `;;`                  | Trailing text that triggers "enhance current line" when followed by Enter. |
++Other init commands:
+ 
+-`ccx` loads `.env` from its own installation directory (`path.join(__dirname, '..', '.env')`), not from your current
+-working directory — so running `ccx` from any project folder never requires (or creates) config there.
++```bash
++ccx init --show    # print current config (key masked)
++ccx init --reset   # wipe config and start over
++```
+ 
+-## Link it globally
++### Environment variable override
+ 
+-From inside this folder:
++You can skip `ccx init` and set env vars directly (useful for CI):
+ 
+ ```bash
+-npm link
++export GEMINI_API_KEY=AIza...
++export GEMINI_MODEL=gemini-2.5-flash   # optional
++export CCX_MARKER=;;                   # optional
++export CCX_TIMEOUT=8                   # optional, seconds
+ ```
+ 
+-This makes `ccx` available as a global command anywhere on your machine. You can now `cd` into any project and just
+-run `ccx claude`.
+-
+ ## Usage
+ 
+ ```bash
+ ccx claude          # launch Claude Code behind the ccx relay
+ ccx claude --resume  # any extra args are passed straight through
+ ccx bash             # or any other command — ccx just wraps argv
+ ```
+ 
+ While the wrapped process is running:
+ 
+ - Type normally — every keystroke is forwarded to the child process exactly as if `ccx` weren't there.
+-- To clean up the current line: type `;;` right after it, then press **Enter**. `ccx` strips the marker, sends the
+-  rest to Gemini, shows `[ccx] enhancing...` briefly, and replaces the line in place with Gemini's rewrite — this
+-  first Enter does *not* submit.
+-- Review the rewritten line, then press **Enter** again (now with no trailing marker) to actually submit it to the
+-  child process.
+-- A plain line with no trailing `;;` submits immediately on Enter, exactly as if `ccx` weren't there.
++- **Trigger with marker:** type `;;` at the end of your line, then press **Enter**. ccx enhances the line and replaces it in place — this first Enter does *not* submit.
++- **Trigger with shortcut:** press **Alt+M** at any point on a non-empty line to enhance immediately without a marker.
++- After enhancement, a Braille spinner animates while Gemini rewrites your prompt, then shows `✓ Enhanced` on success or `✗ error message` on failure.
++- Review the rewritten line, then press **Enter** to submit it to the child process.
++- A plain line with no trigger submits immediately on Enter, exactly as if `ccx` weren't there.
+ - Arrow keys, Ctrl+C, and other control sequences pass through untouched.
+ 
+ ### Changing the marker
+ 
+-Set `CCX_MARKER` in `.env` to any string that won't naturally appear at the end of a prompt (default `;;`). No
+-source changes needed.
++Change `CCX_MARKER` via `ccx init` or env var (default `;;`). No source changes needed.
+ 
+ ## Testing it locally
+ 
+ 1. `npm install`
+ 2. `npm run test` — runs `node --check` against the CLI entry point to catch syntax errors.
+ 3. `npm link`
+ 4. Set up `.env` with a real `GEMINI_API_KEY`.
+ 5. Sanity-check the relay mechanics with a safe command first, before pointing it at `claude`:
+ 
+    ```bash
+diff --git a/bin/ccx-init.js b/bin/ccx-init.js
+new file mode 100644
+index 0000000..354f2f0
+--- /dev/null
++++ b/bin/ccx-init.js
+@@ -0,0 +1,146 @@
++#!/usr/bin/env node
++
++import { createInterface } from 'node:readline';
++import { rmSync, existsSync } from 'node:fs';
++import { load, save, configPath } from '../src/config.js';
++import { enhance } from '../src/gemini.js';
++
++const args = process.argv.slice(2);
++
++// Hidden input helper for API key
++async function promptHidden(question) {
++  return new Promise(resolve => {
++    process.stdout.write(question);
++    const rl = createInterface({ input: process.stdin, output: null, terminal: false });
++    if (process.stdin.isTTY) process.stdin.setRawMode(true);
++    let input = '';
++    process.stdin.on('data', function onData(ch) {
++      ch = ch.toString();
++      if (ch === '\r' || ch === '\n') {
++        if (process.stdin.isTTY) process.stdin.setRawMode(false);
++        process.stdout.write('\n');
++        process.stdin.removeListener('data', onData);
++        rl.close();
++        resolve(input);
++      } else if (ch === '\x7f' || ch === '\x08') {
++        if (input.length > 0) { input = input.slice(0, -1); process.stdout.write('\b \b'); }
++      } else if (ch === '\x03') {
++        process.exit(0);
++      } else {
++        input += ch;
++        process.stdout.write('*');
++      }
++    });
++  });
++}
++
++// Regular prompt helper
++async function prompt(rl, question) {
++  return new Promise(resolve => rl.question(question, resolve));
++}
++
++// Mask API key: show first 6 chars + ****...
++function maskKey(key) {
++  if (!key) return '(not set)';
++  if (key.length <= 6) return key + '****...';
++  return key.slice(0, 6) + '****...';
++}
++
++// Show current config
++function showConfig() {
++  const config = load();
++  const path = configPath();
++
++  console.log(`Config: ${path}\n`);
++  console.log(`  geminiApiKey:   ${maskKey(config.geminiApiKey)}`);
++  console.log(`  geminiModel:    ${config.geminiModel}`);
++  console.log(`  marker:         ${config.marker}`);
++  console.log(`  timeoutSeconds: ${config.timeoutSeconds}`);
++}
++
++// Reset config
++function resetConfig() {
++  const path = configPath();
++
++  if (existsSync(path)) {
++    rmSync(path);
++    console.log('Config reset. Run `ccx init` to set up again.');
++  } else {
++    console.log('No config file found — nothing to reset.');
++  }
++}
++
++// Interactive wizard
++async function runWizard() {
++  console.log('\n  Welcome to ccx setup\n');
++
++  // Step 1: Prompt for API key
++  const key = await promptHidden('  API key: ');
++  if (!key) {
++    console.log('No key entered. Aborting.');
++    process.exit(1);
++  }
++
++  // Step 2: Test the key
++  process.stdout.write('  Testing key... ');
++  try {
++    await enhance('hello', { geminiApiKey: key, geminiModel: 'gemini-2.5-flash', timeoutSeconds: 10 });
++    console.log('\x1b[32m✓ Valid\x1b[0m');
++  } catch (err) {
++    console.log(`\x1b[31m✗ Invalid key\x1b[0m — ${err.message}`);
++    process.exit(1);
++  }
++
++  // Step 3: Model picker
++  const models = [
++    'gemini-2.5-flash',
++    'gemini-1.5-flash',
++    'gemini-2.5-pro'
++  ];
++
++  const rl = createInterface({
++    input: process.stdin,
++    output: process.stdout,
++  });
++
++  console.log('');
++  console.log('  Model:');
++  console.log('  1) gemini-2.5-flash (default)');
++  console.log('  2) gemini-1.5-flash');
++  console.log('  3) gemini-2.5-pro');
++
++  const modelChoice = await prompt(rl, '  Choice [1]: ');
++  const modelIndex = modelChoice.trim() === '' || modelChoice.trim() === '1' ? 0 :
++                    modelChoice.trim() === '2' ? 1 :
++                    modelChoice.trim() === '3' ? 2 : 0;
++  const model = models[modelIndex];
++
++  // Step 4: Trigger marker
++  const markerAnswer = await prompt(rl, '  Trigger marker [;;]: ');
++  const marker = markerAnswer.trim() || ';;';
++
++  // Step 5: Timeout seconds
++  const timeoutAnswer = await prompt(rl, '  Timeout seconds [8]: ');
++  const timeoutSeconds = timeoutAnswer.trim() === '' ? 8 : (parseInt(timeoutAnswer, 10) || 8);
++
++  rl.close();
++
++  // Step 6: Save config
++  save({ geminiApiKey: key, geminiModel: model, marker, timeoutSeconds });
++
++  // Step 7: Success message
++  console.log(`\n  Config saved to ${configPath()}`);
++  console.log('  Run `ccx claude` to start.\n');
++}
++
++// Main dispatch
++if (args.length === 0) {
++  runWizard();
++} else if (args[0] === '--show') {
++  showConfig();
++} else if (args[0] === '--reset') {
++  resetConfig();
++} else {
++  console.error(`Unknown command: ${args[0]}`);
++  process.exit(1);
++}
+diff --git a/bin/ccx.js b/bin/ccx.js
+index caec170..c691d89 100644
+--- a/bin/ccx.js
++++ b/bin/ccx.js
+@@ -1,256 +1,110 @@
+ #!/usr/bin/env node
+-
+ 'use strict';
+ 
+-const path = require('path');
+-
+-require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
++import { load } from '../src/config.js';
++import { enhance, RateLimitError, AuthError, ModelError, TimeoutError, NetworkError } from '../src/gemini.js';
++import { start as spinnerStart, stop as spinnerStop, clear as spinnerClear } from '../src/ui.js';
++import { createInputHandler } from '../src/input.js';
+ 
+ let pty;
+ try {
+-  pty = require('node-pty');
++  pty = (await import('node-pty')).default;
+ } catch (err) {
+   process.stderr.write(
+-    '[ccx] Failed to load node-pty. On Windows this usually means the native\n' +
+-    'module could not be built. Install the "Desktop development with C++"\n' +
+-    'workload (Visual Studio Build Tools) and Python, then run:\n' +
+-    '  npm rebuild node-pty\n' +
++    '[ccx] Failed to load node-pty. On Windows install "Desktop development with C++"\n' +
++    'workload (Visual Studio Build Tools) and Python, then run: npm rebuild node-pty\n' +
+     `Original error: ${err.message}\n`
+   );
+   process.exit(1);
+ }
+ 
+-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+-const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.5-flash';
+-const MARKER = process.env.CCX_MARKER || ';;';
++const config = load();
+ 
+-if (!GEMINI_API_KEY) {
+-  process.stderr.write(
+-    '[ccx] GEMINI_API_KEY is not set.\n' +
+-    `Create a .env file at ${path.join(__dirname, '..', '.env')} (copy .env.example)\n` +
+-    'and set GEMINI_API_KEY=your-key-here.\n'
+-  );
++if (!config.geminiApiKey) {
++  process.stderr.write('[ccx] No API key found. Run `ccx init` to set up.\n');
+   process.exit(1);
+ }
+ 
+ if (!process.stdin.isTTY || !process.stdout.isTTY) {
+   process.stderr.write('[ccx] ccx must be run in an interactive terminal.\n');
+   process.exit(1);
+ }
+ 
+-const argv = process.argv.slice(2);
++const argv      = process.argv.slice(2);
+ const targetCmd = argv[0] || 'claude';
+-const targetArgs = argv.slice(1);
++const targetArgs= argv.slice(1);
+ 
+ const isWindows = process.platform === 'win32';
+-let shellFile;
+-let shellArgs;
+-if (isWindows) {
+-  // node-pty spawns via CreateProcess directly, which cannot execute .cmd/.bat
+-  // shims (e.g. the "claude" launcher installed by npm on Windows) without
+-  // going through cmd.exe. Route everything through cmd.exe /c.
+-  shellFile = process.env.COMSPEC || 'cmd.exe';
+-  shellArgs = ['/d', '/s', '/c', [targetCmd, ...targetArgs].join(' ')];
+-} else {
+-  shellFile = targetCmd;
+-  shellArgs = targetArgs;
+-}
++const shellFile = isWindows ? (process.env.COMSPEC || 'cmd.exe') : targetCmd;
++const shellArgs = isWindows ? ['/d', '/s', '/c', [targetCmd, ...targetArgs].join(' ')] : targetArgs;
+ 
+ const ptyProcess = pty.spawn(shellFile, shellArgs, {
+   name: 'xterm-color',
+   cols: process.stdout.columns || 80,
+-  rows: process.stdout.rows || 24,
+-  cwd: process.cwd(),
+-  env: process.env
++  rows: process.stdout.rows   || 24,
++  cwd:  process.cwd(),
++  env:  process.env,
+ });
+ 
+-ptyProcess.onData((data) => {
+-  process.stdout.write(data);
+-});
++ptyProcess.onData(data => process.stdout.write(data));
+ 
+ process.stdout.on('resize', () => {
+   ptyProcess.resize(process.stdout.columns, process.stdout.rows);
+ });
+ 
+ process.stdin.setRawMode(true);
+ process.stdin.resume();
+ 
+-let lineBuffer = '';
+-let busy = false;
+-
+-function writeStatus(msg) {
+-  process.stderr.write('\x1b[s\r\n\x1b[2K' + msg + '\x1b[u');
+-}
+-
+-function clearStatus() {
+-  process.stderr.write('\x1b[s\r\n\x1b[2K\x1b[u');
+-}
+-
+-async function callGemini(text) {
+-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
+-  const prompt =
+-    'Rewrite the following text to be grammatically correct and clearer, ' +
+-    'while preserving its original intent and meaning exactly. ' +
+-    'This is a single line typed into a terminal prompt, not a chat message - ' +
+-    'respond with EXACTLY ONE rewritten version as a single plain-text line. ' +
+-    'Do not offer multiple options or alternatives. Do not add headings, bullet ' +
+-    'points, markdown formatting, quotes, explanations, or any commentary. ' +
+-    'Output must contain nothing but the rewritten line itself.\n\nText:\n' + text;
+-
+-  const res = await fetch(url, {
+-    method: 'POST',
+-    headers: {
+-      'Content-Type': 'application/json',
+-      'x-goog-api-key': GEMINI_API_KEY
+-    },
+-    body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
+-  });
+-
+-  if (!res.ok) {
+-    const errBody = await res.text();
+-    throw new Error(`Gemini API error ${res.status}: ${errBody.slice(0, 300)}`);
+-  }
+-
+-  const data = await res.json();
+-  const candidate = data.candidates && data.candidates[0];
+-  const parts = candidate && candidate.content && candidate.content.parts;
+-  const result = parts && parts.map((p) => p.text || '').join('').trim();
+-
+-  if (!result) {
+-    throw new Error('Gemini returned an empty response');
+-  }
+-  return result;
+-}
+-
+-async function triggerEnhance() {
+-  const original = lineBuffer;
+-  const toSend = original.slice(0, -MARKER.length);
+-  busy = true;
+-  writeStatus('[ccx] enhancing...');
+-  try {
+-    const improved = await callGemini(toSend);
+-    if (original.length > 0) {
+-      ptyProcess.write(Buffer.alloc(original.length, 0x7f));
+-    }
+-    ptyProcess.write(improved);
+-    lineBuffer = improved;
+-  } catch (err) {
+-    process.stderr.write(`\r\n[ccx] Gemini error: ${err.message}\r\n`);
+-  } finally {
+-    clearStatus();
+-    busy = false;
+-  }
+-}
+-
+-// Windows Terminal / ConPTY "win32-input-mode": CSI Vk;Sc;Uc;Kd;Cs;Rc _
+-// Some CLIs (Claude Code included) enable this for full key fidelity
+-// (e.g. to distinguish Enter from Shift+Enter). Once enabled, the real
+-// host terminal encodes keys - Enter included - this way instead of as
+-// bare bytes, so it has to be decoded to recognize a logical Enter press.
+-function parseWin32InputSeq(chunk, i) {
+-  if (chunk[i + 1] !== 0x5b) {
+-    return null;
+-  }
+-  let j = i + 2;
+-  const start = j;
+-  while (j < chunk.length && ((chunk[j] >= 0x30 && chunk[j] <= 0x39) || chunk[j] === 0x3b)) {
+-    j++;
+-  }
+-  if (j >= chunk.length || chunk[j] !== 0x5f || j === start) {
+-    return null;
+-  }
+-  const parts = chunk.slice(start, j).toString('ascii').split(';').map(Number);
+-  if (parts.length !== 6 || parts.some(Number.isNaN)) {
+-    return null;
+-  }
+-  const [vk, sc, uc, kd, cs, rc] = parts;
+-  return { consumed: j + 1 - i, vk, sc, uc, kd, cs, rc };
+-}
+-
+-function processChunk(chunk) {
+-  let i = 0;
+-  while (i < chunk.length) {
+-    const byte = chunk[i];
+-
+-    if (byte === 0x1b) {
+-      const seq = parseWin32InputSeq(chunk, i);
+-      if (seq) {
+-        if (seq.vk === 13 && seq.kd === 1) {
+-          // Logical Enter key-down, win32-input-mode encoded.
+-          if (lineBuffer.endsWith(MARKER) && lineBuffer.trim().length > MARKER.length) {
+-            triggerEnhance();
+-            return;
+-          }
+-          lineBuffer = '';
+-        } else if (seq.vk === 8 && seq.kd === 1) {
+-          // Logical Backspace key-down, win32-input-mode encoded.
+-          if (lineBuffer.length > 0) {
+-            lineBuffer = lineBuffer.slice(0, -1);
+-          }
+-        }
+-        ptyProcess.write(chunk.slice(i, i + seq.consumed));
+-        i += seq.consumed;
+-        continue;
+-      }
+-      // Regular escape sequence (arrow keys, mouse, etc). Forward the
+-      // remainder of this chunk untouched; do not track it in the buffer.
+-      ptyProcess.write(chunk.slice(i));
++const handler = createInputHandler({
++  marker: config.marker,
++
++  onEnhance: async (line) => {
++    // line may include trailing marker (;;) for the ;; trigger — strip it
++    const toSend = line.endsWith(config.marker) ? line.slice(0, -config.marker.length) : line;
++    handler.setBusy(true);
++    spinnerStart();
++    let improved;
++    try {
++      improved = await enhance(toSend, config);
++    } catch (err) {
++      let msg = 'Enhancement failed';
++      if (err instanceof RateLimitError) msg = 'Quota exceeded';
++      else if (err instanceof AuthError)  msg = 'Invalid key — run ccx init';
++      else if (err instanceof ModelError) msg = 'Model not found — run ccx init';
++      else if (err instanceof TimeoutError) msg = `Timed out after ${config.timeoutSeconds}s — original restored`;
++      else if (err instanceof NetworkError) msg = 'No connection — original restored';
++      await spinnerStop('error', msg);
++      // Erase full echoed text (including marker if present), restore clean original
++      ptyProcess.write(Buffer.alloc(line.length, 0x7f));
++      ptyProcess.write(toSend);
++      handler.setBusy(false);
+       return;
+     }
++    await spinnerStop('success', 'Enhanced');
++    // Erase full echoed text (including marker), write improved
++    ptyProcess.write(Buffer.alloc(line.length, 0x7f));
++    ptyProcess.write(improved);
++    handler.setBusy(false);
++  },
+ 
+-    if (byte === 13) {
+-      // Enter, sent as a bare byte (non-win32-input-mode terminals/children).
+-      if (lineBuffer.endsWith(MARKER) && lineBuffer.trim().length > MARKER.length) {
+-        triggerEnhance();
+-        return;
+-      }
+-      ptyProcess.write(Buffer.from([byte]));
+-      lineBuffer = '';
+-      i++;
+-      continue;
+-    }
+-
+-    if (byte === 3) {
+-      // Ctrl+C
+-      ptyProcess.write(Buffer.from([byte]));
+-      lineBuffer = '';
+-      i++;
+-      continue;
+-    }
+-
+-    if (byte === 127 || byte === 8) {
+-      // Backspace / Delete
+-      if (lineBuffer.length > 0) {
+-        lineBuffer = lineBuffer.slice(0, -1);
+-      }
+-      ptyProcess.write(Buffer.from([byte]));
+-      i++;
+-      continue;
+-    }
++  onSubmit: (_line) => {
++    // Enter already forwarded by input.js passthrough
++  },
+ 
+-    lineBuffer += String.fromCharCode(byte);
+-    ptyProcess.write(Buffer.from([byte]));
+-    i++;
+-  }
+-}
++  onPassthrough: (chunk) => ptyProcess.write(chunk),
+ 
+-process.stdin.on('data', (chunk) => {
+-  if (busy) {
+-    return;
+-  }
+-  processChunk(chunk);
++  onCtrlC: () => {
++    spinnerClear();
++    handler.reset();
++  },
+ });
+ 
++process.stdin.on('data', chunk => handler.processChunk(chunk));
++
+ function cleanupAndExit(code) {
+-  try {
+-    if (process.stdin.isTTY) {
+-      process.stdin.setRawMode(false);
+-    }
+-  } catch (_) {
+-    // ignore
+-  }
++  try { if (process.stdin.isTTY) process.stdin.setRawMode(false); } catch (_) {}
+   process.exit(code == null ? 0 : code);
+ }
+ 
+ ptyProcess.onExit(({ exitCode }) => cleanupAndExit(exitCode));
+ process.on('SIGINT', () => {});
+diff --git a/package.json b/package.json
+index c2e30c0..faf4b65 100644
+--- a/package.json
++++ b/package.json
+@@ -1,25 +1,29 @@
+ {
++  "type": "module",
+   "name": "ccx-relay",
+   "version": "1.0.0",
+   "description": "Transparent PTY wrapper for Claude Code (or any CLI) that lets you refine your prompt with Gemini AI before submitting it, without leaving your terminal session.",
+   "main": "bin/ccx.js",
+   "bin": {
+-    "ccx": "bin/ccx.js"
++    "ccx": "bin/ccx.js",
++    "ccx-init": "bin/ccx-init.js"
+   },
+   "files": [
+     "bin",
++    "src",
+     "README.md",
+     ".env.example"
+   ],
+   "scripts": {
+-    "test": "node --check bin/ccx.js"
++    "test": "node --test test/**/*.test.js",
++    "prepublishOnly": "npm test"
+   },
+   "keywords": [
+     "cli",
+     "claude",
+     "claude-code",
+     "gemini",
+     "pty",
+     "terminal",
+     "ai",
+     "prompt-engineering"
+@@ -27,14 +31,13 @@
+   "author": "Your Name <you@example.com>",
+   "license": "MIT",
+   "repository": {
+     "type": "git",
+     "url": "https://github.com/YOUR_USERNAME/ccx-relay.git"
+   },
+   "engines": {
+     "node": ">=18"
+   },
+   "dependencies": {
+-    "dotenv": "^16.4.5",
+     "node-pty": "^1.0.0"
+   }
+ }
+diff --git a/src/config.js b/src/config.js
+new file mode 100644
+index 0000000..c4b8ebf
+--- /dev/null
++++ b/src/config.js
+@@ -0,0 +1,103 @@
++import fs from 'node:fs';
++import path from 'node:path';
++import os from 'node:os';
++
++const defaults = {
++  geminiApiKey: null,
++  geminiModel: 'gemini-2.5-flash',
++  marker: ';;',
++  timeoutSeconds: 8,
++};
++
++/**
++ * Returns the path to the config.json file.
++ * Windows: %APPDATA%/ccx/config.json
++ * macOS/Linux: ~/.config/ccx/config.json
++ */
++export function configPath() {
++  let configDir;
++
++  if (process.platform === 'win32') {
++    configDir = path.join(
++      process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'),
++      'ccx'
++    );
++  } else {
++    configDir = path.join(
++      process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config'),
++      'ccx'
++    );
++  }
++
++  return path.join(configDir, 'config.json');
++}
++
++/**
++ * Loads user configuration from multiple sources with priority:
++ * 1. Environment variables
++ * 2. config.json file (if exists)
++ * 3. Hardcoded defaults
++ */
++export function load() {
++  const result = { ...defaults };
++
++  // Layer 2: Read from config.json if it exists
++  try {
++    const configFilePath = configPath();
++    if (fs.existsSync(configFilePath)) {
++      const fileContent = fs.readFileSync(configFilePath, 'utf8');
++      const fileConfig = JSON.parse(fileContent);
++      Object.assign(result, fileConfig);
++    }
++  } catch (error) {
++    // If file doesn't exist or fails to parse, use defaults silently
++  }
++
++  // Layer 1: Environment variables override everything
++  if (process.env.GEMINI_API_KEY) {
++    result.geminiApiKey = process.env.GEMINI_API_KEY;
++  }
++  if (process.env.GEMINI_MODEL) {
++    result.geminiModel = process.env.GEMINI_MODEL;
++  }
++  if (process.env.CCX_MARKER) {
++    result.marker = process.env.CCX_MARKER;
++  }
++  if (process.env.CCX_TIMEOUT) {
++    result.timeoutSeconds = Number(process.env.CCX_TIMEOUT);
++  }
++
++  // Ensure timeoutSeconds is a number
++  result.timeoutSeconds = Number(result.timeoutSeconds);
++
++  return result;
++}
++
++/**
++ * Saves a partial config patch to disk.
++ * Creates directory if needed and merges with existing config.
++ */
++export function save(patch) {
++  const configFilePath = configPath();
++  const configDir = path.dirname(configFilePath);
++
++  // Create directory if it doesn't exist
++  fs.mkdirSync(configDir, { recursive: true });
++
++  // Read existing config or use empty object if file doesn't exist
++  let existing = {};
++  try {
++    if (fs.existsSync(configFilePath)) {
++      const fileContent = fs.readFileSync(configFilePath, 'utf8');
++      existing = JSON.parse(fileContent);
++    }
++  } catch (error) {
++    // If file doesn't exist or fails to parse, start with empty object
++  }
++
++  // Deep merge patch into existing
++  const merged = { ...existing, ...patch };
++
++  // Write pretty-printed JSON with 2-space indent
++  fs.writeFileSync(configFilePath, JSON.stringify(merged, null, 2) + '\n');
++}
+diff --git a/src/gemini.js b/src/gemini.js
+new file mode 100644
+index 0000000..bb402fd
+--- /dev/null
++++ b/src/gemini.js
+@@ -0,0 +1,80 @@
++export class RateLimitError extends Error {}
++export class AuthError extends Error {}
++export class ModelError extends Error {}
++export class TimeoutError extends Error {}
++export class NetworkError extends Error {}
++
++const PROMPT_PREFIX =
++  'Rewrite the following text to be grammatically correct and clearer, ' +
++  'while preserving its original intent and meaning exactly. ' +
++  'This is a single line typed into a terminal prompt, not a chat message - ' +
++  'respond with EXACTLY ONE rewritten version as a single plain-text line. ' +
++  'Do not offer multiple options or alternatives. Do not add headings, bullet ' +
++  'points, markdown formatting, quotes, explanations, or any commentary. ' +
++  'Output must contain nothing but the rewritten line itself.\n\nText:\n';
++
++export async function enhance(text, config) {
++  const { geminiApiKey, geminiModel, timeoutSeconds } = config;
++
++  const url = `https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent`;
++  const controller = new AbortController();
++  let timeoutId;
++
++  try {
++    timeoutId = setTimeout(() => controller.abort(), timeoutSeconds * 1000);
++
++    const response = await fetch(url, {
++      method: 'POST',
++      signal: controller.signal,
++      headers: {
++        'Content-Type': 'application/json',
++        'x-goog-api-key': geminiApiKey,
++      },
++      body: JSON.stringify({
++        contents: [{ parts: [{ text: PROMPT_PREFIX + text }] }],
++      }),
++    });
++
++    // Handle bad HTTP status codes
++    if (!response.ok) {
++      const body = await response.text();
++      if (response.status === 429) {
++        throw new RateLimitError('Quota exceeded');
++      } else if (response.status === 401 || response.status === 403) {
++        throw new AuthError('Invalid key — run ccx init');
++      } else if (response.status === 404) {
++        throw new ModelError('Model not found — run ccx init');
++      } else {
++        const truncated = body.substring(0, 200);
++        throw new NetworkError(`API error ${response.status}: ${truncated}`);
++      }
++    }
++
++    // Parse response
++    const data = await response.json();
++    const result = data.candidates[0].content.parts.map(p => p.text || '').join('').trim();
++
++    if (!result) {
++      throw new NetworkError('Gemini returned empty response');
++    }
++
++    return result;
++  } catch (err) {
++    // Handle fetch errors
++    if (err.name === 'AbortError') {
++      throw new TimeoutError(`Timed out after ${timeoutSeconds}s`);
++    }
++
++    // Re-throw custom errors
++    if (err instanceof RateLimitError || err instanceof AuthError ||
++        err instanceof ModelError || err instanceof NetworkError ||
++        err instanceof TimeoutError) {
++      throw err;
++    }
++
++    // Wrap other errors as NetworkError
++    throw new NetworkError('No connection');
++  } finally {
++    clearTimeout(timeoutId);
++  }
++}
+diff --git a/src/input.js b/src/input.js
+new file mode 100644
+index 0000000..877a85c
+--- /dev/null
++++ b/src/input.js
+@@ -0,0 +1,128 @@
++/**
++ * src/input.js — pure stdin parser with Alt+M and ;; triggers
++ * No fetch, no stderr writes, no process.exit
++ */
++
++/**
++ * Parses ESC [ {digits/semicolons} _ sequences (win32-input-mode)
++ * Returns { consumed, vk, sc, uc, kd, cs, rc } or null
++ * @param {Buffer} chunk
++ * @param {number} i  - index of ESC byte
++ */
++function parseWin32InputSeq(chunk, i) {
++  if (chunk[i + 1] !== 0x5b) return null;
++  let j = i + 2;
++  const start = j;
++  while (j < chunk.length && ((chunk[j] >= 0x30 && chunk[j] <= 0x39) || chunk[j] === 0x3b)) j++;
++  if (j >= chunk.length || chunk[j] !== 0x5f || j === start) return null;
++  const parts = chunk.slice(start, j).toString('ascii').split(';').map(Number);
++  if (parts.length !== 6 || parts.some(Number.isNaN)) return null;
++  const [vk, sc, uc, kd, cs, rc] = parts;
++  return { consumed: j + 1 - i, vk, sc, uc, kd, cs, rc };
++}
++
++/**
++ * @param {{ marker: string, onEnhance: Function, onSubmit: Function, onPassthrough: Function, onCtrlC: Function }} opts
++ * @returns {{ processChunk(chunk: Buffer): void, setBusy(b: boolean): void, reset(): void }}
++ */
++export function createInputHandler({ marker, onEnhance, onSubmit, onPassthrough, onCtrlC }) {
++  let lineBuffer = '';
++  let busy = false;
++
++  function reset() {
++    lineBuffer = '';
++    busy = false;
++  }
++
++  function setBusy(b) {
++    busy = b;
++  }
++
++  function processChunk(chunk) {
++    // When busy, forward everything as-is
++    if (busy) {
++      onPassthrough(chunk);
++      return;
++    }
++
++    let i = 0;
++    while (i < chunk.length) {
++      const byte = chunk[i];
++
++      if (byte === 0x1b) {
++        // Try win32-input-mode sequence first
++        const seq = parseWin32InputSeq(chunk, i);
++        if (seq !== null) {
++          if (seq.kd === 1) {
++            if (seq.vk === 13) {
++              // Win32 Enter
++              if (lineBuffer.endsWith(marker) && lineBuffer.trim().length > marker.length) {
++                onEnhance(lineBuffer);
++                return;
++              } else {
++                onSubmit(lineBuffer);
++                lineBuffer = '';
++              }
++            } else if (seq.vk === 8) {
++              // Win32 Backspace
++              if (lineBuffer.length > 0) lineBuffer = lineBuffer.slice(0, -1);
++            } else if (seq.vk === 77 && (seq.cs & (0x0001 | 0x0002))) {
++              // Win32 Alt+M
++              if (lineBuffer.length > 0) {
++                onEnhance(lineBuffer);
++                return;
++              }
++            }
++          }
++          onPassthrough(chunk.slice(i, i + seq.consumed));
++          i += seq.consumed;
++          continue;
++        }
++
++        // No win32 sequence — check for standard Alt+M (ESC followed by 0x6d)
++        if (i + 1 < chunk.length && chunk[i + 1] === 0x6d) {
++          if (lineBuffer.length > 0) {
++            onEnhance(lineBuffer);
++            return;
++          } else {
++            onPassthrough(chunk.slice(i, i + 2));
++            i += 2;
++          }
++        } else {
++          // Forward rest untouched
++          onPassthrough(chunk.slice(i));
++          return;
++        }
++      } else if (byte === 0x0d) {
++        // Enter
++        if (lineBuffer.endsWith(marker) && lineBuffer.trim().length > marker.length) {
++          onEnhance(lineBuffer);
++          return;
++        } else {
++          onSubmit(lineBuffer);
++          onPassthrough(Buffer.from([byte]));
++          lineBuffer = '';
++        }
++        i++;
++      } else if (byte === 0x03) {
++        // Ctrl+C
++        onCtrlC();
++        onPassthrough(Buffer.from([byte]));
++        lineBuffer = '';
++        i++;
++      } else if (byte === 0x7f || byte === 0x08) {
++        // Backspace
++        lineBuffer = lineBuffer.slice(0, -1);
++        onPassthrough(Buffer.from([byte]));
++        i++;
++      } else {
++        // Printable char
++        lineBuffer += String.fromCharCode(byte);
++        onPassthrough(Buffer.from([byte]));
++        i++;
++      }
++    }
++  }
++
++  return { processChunk, setBusy, reset };
++}
+diff --git a/src/ui.js b/src/ui.js
+new file mode 100644
+index 0000000..892f077
+--- /dev/null
++++ b/src/ui.js
+@@ -0,0 +1,65 @@
++const BRAILLE_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
++const FRAME_INTERVAL = 80; // ms
++
++let spinnerInterval = null;
++let currentFrame = 0;
++
++/**
++ * Draws the status line on stderr with cursor save/restore
++ */
++function drawStatusLine(content) {
++  const ansi = `\x1b[s\r\n\x1b[2K${content}\x1b[u`;
++  process.stderr.write(ansi);
++}
++
++/**
++ * Starts animating the Braille spinner on stderr
++ */
++export function start() {
++  // Reset frame counter and stop any existing interval
++  currentFrame = 0;
++  if (spinnerInterval) {
++    clearInterval(spinnerInterval);
++  }
++
++  spinnerInterval = setInterval(() => {
++    const frame = BRAILLE_FRAMES[currentFrame % BRAILLE_FRAMES.length];
++    drawStatusLine(`${frame} Enhancing prompt...`);
++    currentFrame++;
++  }, FRAME_INTERVAL);
++}
++
++/**
++ * Stops the spinner and shows a final status message
++ */
++export async function stop(state, message) {
++  // Clear the spinner interval
++  if (spinnerInterval) {
++    clearInterval(spinnerInterval);
++    spinnerInterval = null;
++  }
++
++  // Draw final state based on success/error
++  const symbol = state === 'success' ? '✓' : '✗';
++  const colorCode = state === 'success' ? '32' : '31';
++  const statusLine = `\x1b[${colorCode}m${symbol} ${message}\x1b[0m`;
++
++  drawStatusLine(statusLine);
++
++  // Wait 400ms
++  await new Promise(r => setTimeout(r, 400));
++
++  // Clear the status line
++  drawStatusLine('');
++}
++
++/**
++ * Immediately clears the status line and stops spinner
++ */
++export function clear() {
++  if (spinnerInterval) {
++    clearInterval(spinnerInterval);
++    spinnerInterval = null;
++  }
++  drawStatusLine('');
++}
+diff --git a/test/config.test.js b/test/config.test.js
+new file mode 100644
+index 0000000..d1ea168
+--- /dev/null
++++ b/test/config.test.js
+@@ -0,0 +1,140 @@
++import test from 'node:test';
++import assert from 'node:assert';
++import fs from 'node:fs';
++import path from 'node:path';
++import os from 'node:os';
++import { fileURLToPath } from 'node:url';
++import { configPath, load, save } from '../src/config.js';
++
++const __dirname = path.dirname(fileURLToPath(import.meta.url));
++
++// Helper to set up isolated test environment
++function setupTestEnv() {
++  const tmpdir = fs.mkdtempSync(path.join(os.tmpdir(), 'ccx-config-test-'));
++  const originalEnv = { ...process.env };
++
++  // Override environment variables for test isolation
++  process.env.APPDATA = tmpdir;
++  process.env.HOME = tmpdir;
++  delete process.env.GEMINI_API_KEY;
++  delete process.env.GEMINI_MODEL;
++  delete process.env.CCX_MARKER;
++  delete process.env.CCX_TIMEOUT;
++
++  return { tmpdir, originalEnv };
++}
++
++function restoreEnv(originalEnv) {
++  process.env = originalEnv;
++}
++
++function cleanupTmpdir(tmpdir) {
++  fs.rmSync(tmpdir, { recursive: true, force: true });
++}
++
++test('configPath() returns path ending in config.json and containing ccx', () => {
++  const result = configPath();
++  assert.ok(result.endsWith('config.json'), `Path should end with config.json, got: ${result}`);
++  assert.ok(result.includes('ccx'), `Path should contain ccx, got: ${result}`);
++});
++
++test('load() returns defaults when no config file exists', () => {
++  const env = setupTestEnv();
++  try {
++    const config = load();
++    assert.deepStrictEqual(config, {
++      geminiApiKey: null,
++      geminiModel: 'gemini-2.5-flash',
++      marker: ';;',
++      timeoutSeconds: 8,
++    });
++  } finally {
++    restoreEnv(env.originalEnv);
++    cleanupTmpdir(env.tmpdir);
++  }
++});
++
++test('load() reads values from config file', () => {
++  const env = setupTestEnv();
++  try {
++    const configDir = path.join(env.tmpdir, 'ccx');
++    fs.mkdirSync(configDir, { recursive: true });
++    const configFile = path.join(configDir, 'config.json');
++    fs.writeFileSync(configFile, JSON.stringify({
++      geminiApiKey: 'test-key',
++      geminiModel: 'gemini-custom',
++      marker: '::',
++      timeoutSeconds: '5',
++    }));
++
++    const config = load();
++    assert.deepStrictEqual(config, {
++      geminiApiKey: 'test-key',
++      geminiModel: 'gemini-custom',
++      marker: '::',
++      timeoutSeconds: 5,
++    });
++  } finally {
++    restoreEnv(env.originalEnv);
++    cleanupTmpdir(env.tmpdir);
++  }
++});
++
++test('env vars override config file values', () => {
++  const env = setupTestEnv();
++  try {
++    const configDir = path.join(env.tmpdir, 'ccx');
++    fs.mkdirSync(configDir, { recursive: true });
++    const configFile = path.join(configDir, 'config.json');
++    fs.writeFileSync(configFile, JSON.stringify({
++      geminiApiKey: 'file-key',
++      geminiModel: 'gemini-file',
++      marker: '::',
++      timeoutSeconds: 5,
++    }));
++
++    // Set environment variables
++    process.env.GEMINI_API_KEY = 'env-key';
++    process.env.GEMINI_MODEL = 'gemini-env';
++    process.env.CCX_MARKER = '>>>';
++    process.env.CCX_TIMEOUT = '10';
++
++    const config = load();
++    assert.deepStrictEqual(config, {
++      geminiApiKey: 'env-key',
++      geminiModel: 'gemini-env',
++      marker: '>>>',
++      timeoutSeconds: 10,
++    });
++  } finally {
++    restoreEnv(env.originalEnv);
++    cleanupTmpdir(env.tmpdir);
++  }
++});
++
++test('save() writes patch and load() reads it back', () => {
++  const env = setupTestEnv();
++  try {
++    // First save
++    save({ geminiApiKey: 'my-key', marker: '@@' });
++
++    // Verify load reads it back
++    const config = load();
++    assert.strictEqual(config.geminiApiKey, 'my-key');
++    assert.strictEqual(config.marker, '@@');
++    assert.strictEqual(config.geminiModel, 'gemini-2.5-flash');
++    assert.strictEqual(config.timeoutSeconds, 8);
++
++    // Second save patches existing
++    save({ timeoutSeconds: 15 });
++
++    const config2 = load();
++    assert.strictEqual(config2.geminiApiKey, 'my-key');
++    assert.strictEqual(config2.marker, '@@');
++    assert.strictEqual(config2.geminiModel, 'gemini-2.5-flash');
++    assert.strictEqual(config2.timeoutSeconds, 15);
++  } finally {
++    restoreEnv(env.originalEnv);
++    cleanupTmpdir(env.tmpdir);
++  }
++});
+diff --git a/test/gemini.test.js b/test/gemini.test.js
+new file mode 100644
+index 0000000..d4e66b5
+--- /dev/null
++++ b/test/gemini.test.js
+@@ -0,0 +1,59 @@
++import { test } from 'node:test';
++import { strict as assert } from 'node:assert';
++
++const cfg = { geminiApiKey: 'AIzaTEST', geminiModel: 'gemini-2.5-flash', timeoutSeconds: 8 };
++
++function mockFetch(status, body) {
++  global.fetch = async () => ({
++    ok: status >= 200 && status < 300,
++    status,
++    text: async () => JSON.stringify(body),
++    json: async () => body,
++  });
++}
++
++const { enhance, RateLimitError, AuthError, ModelError, TimeoutError, NetworkError } =
++  await import('../src/gemini.js');
++
++test('returns rewritten text on success', async () => {
++  mockFetch(200, { candidates: [{ content: { parts: [{ text: 'Fixed text' }] } }] });
++  const result = await enhance('fix teh bug', cfg);
++  assert.equal(result, 'Fixed text');
++});
++
++test('throws RateLimitError on 429', async () => {
++  mockFetch(429, { error: { message: 'quota' } });
++  await assert.rejects(() => enhance('text', cfg), RateLimitError);
++});
++
++test('throws AuthError on 401', async () => {
++  mockFetch(401, { error: { message: 'unauth' } });
++  await assert.rejects(() => enhance('text', cfg), AuthError);
++});
++
++test('throws AuthError on 403', async () => {
++  mockFetch(403, { error: { message: 'forbidden' } });
++  await assert.rejects(() => enhance('text', cfg), AuthError);
++});
++
++test('throws ModelError on 404', async () => {
++  mockFetch(404, { error: { message: 'not found' } });
++  await assert.rejects(() => enhance('text', cfg), ModelError);
++});
++
++test('throws NetworkError on fetch rejection', async () => {
++  global.fetch = async () => { throw new Error('ECONNREFUSED'); };
++  await assert.rejects(() => enhance('text', cfg), NetworkError);
++});
++
++test('throws TimeoutError when AbortController fires', async () => {
++  global.fetch = (url, opts) => {
++    return new Promise((resolve, reject) => {
++      opts.signal.addEventListener('abort', () => {
++        reject(new DOMException('The operation was aborted', 'AbortError'));
++      });
++    });
++  };
++  const fastCfg = { ...cfg, timeoutSeconds: 0.05 };
++  await assert.rejects(() => enhance('text', fastCfg), TimeoutError);
++});
+diff --git a/test/input.test.js b/test/input.test.js
+new file mode 100644
+index 0000000..4ac3ea9
+--- /dev/null
++++ b/test/input.test.js
+@@ -0,0 +1,94 @@
++import { test } from 'node:test';
++import { strict as assert } from 'node:assert';
++import { createInputHandler } from '../src/input.js';
++
++function makeHandler(overrides = {}) {
++  const events = [];
++  const h = createInputHandler({
++    marker: ';;',
++    onEnhance:    line  => events.push({ type: 'enhance', line }),
++    onSubmit:     line  => events.push({ type: 'submit',  line }),
++    onPassthrough:chunk => events.push({ type: 'pass',    chunk }),
++    onCtrlC:      ()    => events.push({ type: 'ctrlc' }),
++    ...overrides,
++  });
++  return { h, events };
++}
++
++test('printable chars build lineBuffer and passthrough', () => {
++  const { h, events } = makeHandler();
++  h.processChunk(Buffer.from('hello'));
++  assert.equal(events.filter(e => e.type === 'pass').length, 5);
++});
++
++test('Enter submits plain line', () => {
++  const { h, events } = makeHandler();
++  h.processChunk(Buffer.from('hello'));
++  h.processChunk(Buffer.from([0x0d]));
++  assert.ok(events.find(e => e.type === 'submit' && e.line === 'hello'));
++});
++
++test(';; + Enter triggers enhance with full lineBuffer (including marker)', () => {
++  const { h, events } = makeHandler();
++  h.processChunk(Buffer.from('fix bug;;'));
++  h.processChunk(Buffer.from([0x0d]));
++  assert.ok(events.find(e => e.type === 'enhance' && e.line === 'fix bug;;'));
++});
++
++test(';; only (no content before) does not trigger enhance', () => {
++  const { h, events } = makeHandler();
++  h.processChunk(Buffer.from(';;'));
++  h.processChunk(Buffer.from([0x0d]));
++  assert.ok(!events.find(e => e.type === 'enhance'));
++  assert.ok(events.find(e => e.type === 'submit'));
++});
++
++test('Alt+M (ESC m) triggers enhance on non-empty line', () => {
++  const { h, events } = makeHandler();
++  h.processChunk(Buffer.from('fix bug'));
++  h.processChunk(Buffer.from([0x1b, 0x6d]));
++  assert.ok(events.find(e => e.type === 'enhance' && e.line === 'fix bug'));
++});
++
++test('Alt+M on empty line does passthrough', () => {
++  const { h, events } = makeHandler();
++  h.processChunk(Buffer.from([0x1b, 0x6d]));
++  assert.ok(!events.find(e => e.type === 'enhance'));
++  assert.ok(events.find(e => e.type === 'pass'));
++});
++
++test('Backspace pops last char from buffer', () => {
++  const { h, events } = makeHandler();
++  h.processChunk(Buffer.from('hello'));
++  h.processChunk(Buffer.from([0x7f]));
++  h.processChunk(Buffer.from([0x0d]));
++  assert.ok(events.find(e => e.type === 'submit' && e.line === 'hell'));
++});
++
++test('Ctrl+C emits ctrlc', () => {
++  const { h, events } = makeHandler();
++  h.processChunk(Buffer.from([0x03]));
++  assert.ok(events.find(e => e.type === 'ctrlc'));
++});
++
++test('setBusy blocks enhance triggers', () => {
++  const { h, events } = makeHandler();
++  h.setBusy(true);
++  h.processChunk(Buffer.from('fix bug;;'));
++  h.processChunk(Buffer.from([0x0d]));
++  assert.ok(!events.find(e => e.type === 'enhance'));
++});
++
++test('win32-input-mode Enter (VK=13 kd=1) submits line', () => {
++  const { h, events } = makeHandler();
++  h.processChunk(Buffer.from('hello'));
++  h.processChunk(Buffer.from('\x1b[13;0;13;1;0;1_'));
++  assert.ok(events.find(e => e.type === 'submit' && e.line === 'hello'));
++});
++
++test('win32-input-mode Alt+M (VK=77 kd=1 cs=2) triggers enhance', () => {
++  const { h, events } = makeHandler();
++  h.processChunk(Buffer.from('fix bug'));
++  h.processChunk(Buffer.from('\x1b[77;50;109;1;2;1_'));
++  assert.ok(events.find(e => e.type === 'enhance' && e.line === 'fix bug'));
++});

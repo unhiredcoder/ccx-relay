@@ -1,0 +1,177 @@
+diff --git a/bin/ccx-init.js b/bin/ccx-init.js
+new file mode 100644
+index 0000000..addafdc
+--- /dev/null
++++ b/bin/ccx-init.js
+@@ -0,0 +1,146 @@
++#!/usr/bin/env node
++
++import { createInterface } from 'node:readline';
++import { rmSync, existsSync } from 'node:fs';
++import { load, save, configPath } from '../src/config.js';
++import { enhance } from '../src/gemini.js';
++
++const args = process.argv.slice(2);
++
++// Hidden input helper for API key
++async function promptHidden(question) {
++  return new Promise(resolve => {
++    process.stdout.write(question);
++    const rl = createInterface({ input: process.stdin, output: null, terminal: false });
++    if (process.stdin.isTTY) process.stdin.setRawMode(true);
++    let input = '';
++    process.stdin.on('data', function onData(ch) {
++      ch = ch.toString();
++      if (ch === '\r' || ch === '\n') {
++        if (process.stdin.isTTY) process.stdin.setRawMode(false);
++        process.stdout.write('\n');
++        process.stdin.removeListener('data', onData);
++        rl.close();
++        resolve(input);
++      } else if (ch === '\x7f' || ch === '\x08') {
++        if (input.length > 0) { input = input.slice(0, -1); process.stdout.write('\b \b'); }
++      } else if (ch === '\x03') {
++        process.exit(0);
++      } else {
++        input += ch;
++        process.stdout.write('*');
++      }
++    });
++  });
++}
++
++// Regular prompt helper
++async function prompt(rl, question) {
++  return new Promise(resolve => rl.question(question, resolve));
++}
++
++// Mask API key: show first 6 chars + ****...
++function maskKey(key) {
++  if (!key) return '(not set)';
++  if (key.length <= 6) return key + '****...';
++  return key.slice(0, 6) + '****...';
++}
++
++// Show current config
++function showConfig() {
++  const config = load();
++  const path = configPath();
++
++  console.log(`Config: ${path}\n`);
++  console.log(`  geminiApiKey:   ${maskKey(config.geminiApiKey)}`);
++  console.log(`  geminiModel:    ${config.geminiModel}`);
++  console.log(`  marker:         ${config.marker}`);
++  console.log(`  timeoutSeconds: ${config.timeoutSeconds}`);
++}
++
++// Reset config
++function resetConfig() {
++  const path = configPath();
++
++  if (existsSync(path)) {
++    rmSync(path);
++    console.log('Config reset. Run `ccx init` to set up again.');
++  } else {
++    console.log('No config file found — nothing to reset.');
++  }
++}
++
++// Interactive wizard
++async function runWizard() {
++  console.log('\n  Welcome to ccx setup\n');
++
++  // Step 1: Prompt for API key
++  const key = await promptHidden('  API key: ');
++  if (!key) {
++    console.log('No key entered. Aborting.');
++    process.exit(1);
++  }
++
++  // Step 2: Test the key
++  process.stdout.write('  Testing key... ');
++  try {
++    await enhance('hello', { geminiApiKey: key, geminiModel: 'gemini-2.5-flash', timeoutSeconds: 10 });
++    console.log('\x1b[32m✓ Valid\x1b[0m');
++  } catch (err) {
++    console.log(`\x1b[31m✗ Invalid key\x1b[0m — ${err.message}`);
++    process.exit(1);
++  }
++
++  // Step 3: Model picker
++  const models = [
++    'gemini-2.5-flash',
++    'gemini-1.5-flash',
++    'gemini-2.5-pro'
++  ];
++
++  const rl = createInterface({
++    input: process.stdin,
++    output: process.stdout,
++  });
++
++  console.log('');
++  console.log('  Model:');
++  console.log('  1) gemini-2.5-flash (default)');
++  console.log('  2) gemini-1.5-flash');
++  console.log('  3) gemini-2.5-pro');
++
++  const modelChoice = await prompt(rl, '  Choice [1]: ');
++  const modelIndex = modelChoice.trim() === '' || modelChoice.trim() === '1' ? 0 :
++                    modelChoice.trim() === '2' ? 1 :
++                    modelChoice.trim() === '3' ? 2 : 0;
++  const model = models[modelIndex];
++
++  // Step 4: Trigger marker
++  const markerAnswer = await prompt(rl, '  Trigger marker [;;]: ');
++  const marker = markerAnswer.trim() === '' ? ';;' : markerAnswer;
++
++  // Step 5: Timeout seconds
++  const timeoutAnswer = await prompt(rl, '  Timeout seconds [8]: ');
++  const timeoutSeconds = timeoutAnswer.trim() === '' ? 8 : parseInt(timeoutAnswer, 10);
++
++  rl.close();
++
++  // Step 6: Save config
++  save({ geminiApiKey: key, geminiModel: model, marker, timeoutSeconds });
++
++  // Step 7: Success message
++  console.log(`\n  Config saved to ${configPath()}`);
++  console.log('  Run `ccx claude` to start.\n');
++}
++
++// Main dispatch
++if (args.length === 0) {
++  runWizard();
++} else if (args[0] === '--show') {
++  showConfig();
++} else if (args[0] === '--reset') {
++  resetConfig();
++} else {
++  console.error(`Unknown command: ${args[0]}`);
++  process.exit(1);
++}
+diff --git a/package.json b/package.json
+index 64016e8..faf4b65 100644
+--- a/package.json
++++ b/package.json
+@@ -1,18 +1,19 @@
+ {
+   "type": "module",
+   "name": "ccx-relay",
+   "version": "1.0.0",
+   "description": "Transparent PTY wrapper for Claude Code (or any CLI) that lets you refine your prompt with Gemini AI before submitting it, without leaving your terminal session.",
+   "main": "bin/ccx.js",
+   "bin": {
+-    "ccx": "bin/ccx.js"
++    "ccx": "bin/ccx.js",
++    "ccx-init": "bin/ccx-init.js"
+   },
+   "files": [
+     "bin",
+     "src",
+     "README.md",
+     ".env.example"
+   ],
+   "scripts": {
+     "test": "node --test test/**/*.test.js",
+     "prepublishOnly": "npm test"
