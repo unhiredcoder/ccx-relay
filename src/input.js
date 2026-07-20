@@ -57,7 +57,7 @@ export function createInputHandler({ marker, onEnhance, onSubmit, onPassthrough,
             if (seq.vk === 13) {
               // Win32 Enter
               if (lineBuffer.endsWith(marker) && lineBuffer.trim().length > marker.length) {
-                onEnhance(lineBuffer.slice(0, -marker.length));
+                onEnhance(lineBuffer);
                 return;
               } else {
                 onSubmit(lineBuffer);
@@ -96,7 +96,7 @@ export function createInputHandler({ marker, onEnhance, onSubmit, onPassthrough,
       } else if (byte === 0x0d) {
         // Enter
         if (lineBuffer.endsWith(marker) && lineBuffer.trim().length > marker.length) {
-          onEnhance(lineBuffer.slice(0, -marker.length));
+          onEnhance(lineBuffer);
           return;
         } else {
           onSubmit(lineBuffer);

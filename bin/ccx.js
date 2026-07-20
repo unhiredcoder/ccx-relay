@@ -59,11 +59,13 @@ const handler = createInputHandler({
   marker: config.marker,
 
   onEnhance: async (line) => {
+    // line may include trailing marker (;;) for the ;; trigger — strip it
+    const toSend = line.endsWith(config.marker) ? line.slice(0, -config.marker.length) : line;
     handler.setBusy(true);
     spinnerStart();
     let improved;
     try {
-      improved = await enhance(line, config);
+      improved = await enhance(toSend, config);
     } catch (err) {
       let msg = 'Enhancement failed';
       if (err instanceof RateLimitError) msg = 'Quota exceeded';
@@ -72,11 +74,14 @@ const handler = createInputHandler({
       else if (err instanceof TimeoutError) msg = `Timed out after ${config.timeoutSeconds}s — original restored`;
       else if (err instanceof NetworkError) msg = 'No connection — original restored';
       await spinnerStop('error', msg);
-      ptyProcess.write(line);
+      // Erase full echoed text (including marker if present), restore clean original
+      ptyProcess.write(Buffer.alloc(line.length, 0x7f));
+      ptyProcess.write(toSend);
       handler.setBusy(false);
       return;
     }
     await spinnerStop('success', 'Enhanced');
+    // Erase full echoed text (including marker), write improved
     ptyProcess.write(Buffer.alloc(line.length, 0x7f));
     ptyProcess.write(improved);
     handler.setBusy(false);

@@ -28,11 +28,11 @@ test('Enter submits plain line', () => {
   assert.ok(events.find(e => e.type === 'submit' && e.line === 'hello'));
 });
 
-test(';; + Enter triggers enhance', () => {
+test(';; + Enter triggers enhance with full lineBuffer (including marker)', () => {
   const { h, events } = makeHandler();
   h.processChunk(Buffer.from('fix bug;;'));
   h.processChunk(Buffer.from([0x0d]));
-  assert.ok(events.find(e => e.type === 'enhance' && e.line === 'fix bug'));
+  assert.ok(events.find(e => e.type === 'enhance' && e.line === 'fix bug;;'));
 });
 
 test(';; only (no content before) does not trigger enhance', () => {
