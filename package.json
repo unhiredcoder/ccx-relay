@@ -1,0 +1,40 @@
+{
+  "name": "ccx-relay",
+  "version": "1.0.0",
+  "description": "Transparent PTY wrapper for Claude Code (or any CLI) that lets you refine your prompt with Gemini AI before submitting it, without leaving your terminal session.",
+  "main": "bin/ccx.js",
+  "bin": {
+    "ccx": "bin/ccx.js"
+  },
+  "files": [
+    "bin",
+    "README.md",
+    ".env.example"
+  ],
+  "scripts": {
+    "test": "node --check bin/ccx.js"
+  },
+  "keywords": [
+    "cli",
+    "claude",
+    "claude-code",
+    "gemini",
+    "pty",
+    "terminal",
+    "ai",
+    "prompt-engineering"
+  ],
+  "author": "Your Name <you@example.com>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/YOUR_USERNAME/ccx-relay.git"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "node-pty": "^1.0.0"
+  }
+}

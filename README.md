@@ -1,0 +1,178 @@
+# ccx
+
+A transparent PTY wrapper for [Claude Code](https://docs.anthropic.com/claude/docs/claude-code) (or any interactive
+CLI) that lets you refine your prompt with Gemini AI before you submit it — without leaving your normal terminal
+session.
+
+Run `ccx claude` instead of `claude`. Everything looks and behaves like a normal Claude Code session. When you want a
+rough line cleaned up, append a trailing marker (default `;;`) and press Enter once — `ccx` sends what you typed
+(minus the marker) to Gemini, gets back a grammatically corrected / clearer rewrite of the same intent, and swaps it
+in-place on the line, as if you'd typed the better version yourself, without submitting it yet. Review it, then press
+Enter again as usual to actually submit.
+
+This marker-based trigger (rather than a keyboard shortcut) is deliberate: a hotkey has to survive three independent
+layers of keybinding claims — the OS/global-hotkey tools, the terminal app (VS Code and its extensions), and the
+wrapped CLI's own input handling — and on a sufficiently customized machine, every `Ctrl`/`Alt` combination worth
+trying can already be spoken for by one of them. Plain typed text has no such competition.
+
+## Prerequisites
+
+- **Node.js 18+** (needed for the built-in `fetch` used to call the Gemini API).
+- **A Gemini API key** — get one at https://aistudio.google.com/apikey. As of mid-2026, Google issues new keys as
+  "Auth keys" starting with `AQ.` (the older `AIza`-prefixed "Standard" keys are being phased out through
+  September 2026). `ccx` sends the key via the `x-goog-api-key` header, which works for both key types.
+- **Windows only:** `node-pty` is a native module and needs to be compiled during `npm install`. Make sure you have:
+  - Visual Studio Build Tools with the "Desktop development with C++" workload, and
+  - Python 3.x on your PATH.
+
+  If `npm install` fails while building `node-pty`, install the above and run `npm rebuild node-pty`.
+
+## Install
+
+```bash
+git clone <this repo, or just use the folder you already have>
+cd ccx
+npm install
+```
+
+## Configure
+
+`ccx` is a standalone global tool — its config lives with the package itself, never in your project folders.
+
+```bash
+copy .env.example .env    # Windows
+# cp .env.example .env    # macOS/Linux
+```
+
+Edit `.env` (in this package's own folder) and set:
+
+| Variable         | Required | Default              | Description                                                        |
+|------------------|----------|-----------------------|----------------------------------------------------------------------|
+| `GEMINI_API_KEY` | Yes      | —                     | Your Gemini API key.                                                |
+| `GEMINI_MODEL`   | No       | `gemini-3.5-flash`    | Gemini model used to rewrite your prompt (must be a currently supported, non-deprecated model — check https://ai.google.dev/gemini-api/docs/pricing for the current free-tier list). |
+| `CCX_MARKER`     | No       | `;;`                  | Trailing text that triggers "enhance current line" when followed by Enter. |
+
+`ccx` loads `.env` from its own installation directory (`path.join(__dirname, '..', '.env')`), not from your current
+working directory — so running `ccx` from any project folder never requires (or creates) config there.
+
+## Link it globally
+
+From inside this folder:
+
+```bash
+npm link
+```
+
+This makes `ccx` available as a global command anywhere on your machine. You can now `cd` into any project and just
+run `ccx claude`.
+
+## Usage
+
+```bash
+ccx claude          # launch Claude Code behind the ccx relay
+ccx claude --resume  # any extra args are passed straight through
+ccx bash             # or any other command — ccx just wraps argv
+```
+
+While the wrapped process is running:
+
+- Type normally — every keystroke is forwarded to the child process exactly as if `ccx` weren't there.
+- To clean up the current line: type `;;` right after it, then press **Enter**. `ccx` strips the marker, sends the
+  rest to Gemini, shows `[ccx] enhancing...` briefly, and replaces the line in place with Gemini's rewrite — this
+  first Enter does *not* submit.
+- Review the rewritten line, then press **Enter** again (now with no trailing marker) to actually submit it to the
+  child process.
+- A plain line with no trailing `;;` submits immediately on Enter, exactly as if `ccx` weren't there.
+- Arrow keys, Ctrl+C, and other control sequences pass through untouched.
+
+### Changing the marker
+
+Set `CCX_MARKER` in `.env` to any string that won't naturally appear at the end of a prompt (default `;;`). No
+source changes needed.
+
+## Testing it locally
+
+1. `npm install`
+2. `npm run test` — runs `node --check` against the CLI entry point to catch syntax errors.
+3. `npm link`
+4. Set up `.env` with a real `GEMINI_API_KEY`.
+5. Sanity-check the relay mechanics with a safe command first, before pointing it at `claude`:
+
+   ```bash
+   ccx cmd        # Windows Command Prompt
+   ccx powershell # or PowerShell
+   ```
+
+   You should see a completely normal shell. Type a sentence with a typo, e.g. `pls fix teh bug in server.js;;`,
+   then press **Enter**. You should see `[ccx] enhancing...` flash briefly, then the line rewritten in place
+   (e.g. `Please fix the bug in server.js`) with nothing submitted yet. Press Enter again to run it as a normal
+   shell command.
+
+6. Once the mechanics check out, run it against the real target:
+
+   ```bash
+   ccx claude
+   ```
+
+## Known limitations
+
+- **Works best for single-line prompts typed straight through.** The line buffer is a plain JS string built up as
+  you type; it does not model cursor position.
+- **Heavy mid-line editing via arrow keys is not fully tracked.** Escape sequences (arrow keys, Home/End, etc.) are
+  detected and forwarded to the child untouched so navigation still *works* visually, but `ccx`'s internal buffer
+  does not move its own "cursor" — it only appends on printable input and pops on backspace. If you arrow back into
+  the middle of a line and start editing there, the buffer sent to Gemini (and the backspace count used to erase the
+  line) can drift out of sync with what's actually on screen. Worth testing carefully before relying on it for
+  heavily-edited multi-line pastes.
+- **Byte-wise, not codepoint-wise.** Input is processed one byte at a time; multi-byte UTF-8 characters (accents,
+  emoji, non-Latin scripts) may not round-trip through the buffer correctly, though they are still forwarded to the
+  child untouched when you're not invoking the hotkey.
+- **Status line display is best-effort.** `ccx` uses ANSI save/restore-cursor sequences to show and clear the
+  `[ccx] enhancing...` message on its own line. This works in standard ANSI/VT terminals (including the VS Code
+  integrated terminal) but isn't guaranteed on every terminal emulator.
+- **The marker itself is reserved.** If you genuinely need a prompt to end with `;;` literally, either add a
+  trailing space after it or change `CCX_MARKER` to something you don't otherwise type.
+
+## Windows-specific notes
+
+- **`.cmd`/`.bat` shims:** `node-pty` spawns processes via Windows' `CreateProcess`, which cannot directly execute
+  `.cmd`/`.bat` files (this is how `claude` and many other npm-installed global CLIs are shimmed on Windows). `ccx`
+  works around this by routing the target command through `cmd.exe /c` on Windows. You shouldn't need to do anything
+  differently — `ccx claude` just works — but if you add your own wrapped commands, keep in mind they're run via
+  `cmd.exe`.
+- **ConPTY vs. WSL:** on native Windows, `node-pty` uses ConPTY (Windows' native pseudoconsole API). This is
+  different from running inside WSL, where `node-pty` behaves like it does on Linux/macOS (real PTYs). Resize
+  events, signal delivery, and raw-mode behavior can differ subtly between the two — if you run `ccx` inside a WSL
+  terminal instead of a native Windows one, treat it as a separate environment to re-test.
+- **"win32-input-mode" can replace plain keys with escape sequences.** Some CLIs (Claude Code included) enable a
+  ConPTY/Windows Terminal feature called win32-input-mode on startup, for full keyboard fidelity (e.g. to
+  distinguish Enter from Shift+Enter). Once enabled, the *real* host terminal stops sending some keys as plain
+  bytes and instead encodes them as `ESC[Vk;Sc;Uc;Kd;Cs;Rc_` (virtual-key code, scan code, Unicode char, key
+  down/up flag, control-key state, repeat count) — this was observed for both Enter (`Vk=13`) and Backspace
+  (`Vk=8`) while wrapping `claude`, arriving as a pair of sequences (key-down then key-up) in a single stdin read.
+  `ccx` decodes this format specifically to recognize Enter and Backspace; if you see other keys behaving oddly
+  when wrapping a different CLI on Windows, they may need the same treatment — check `parseWin32InputSeq` in
+  `bin/ccx.js`.
+- **Ctrl+C:** in raw mode with ConPTY's virtual-terminal input enabled, Ctrl+C arrives as byte `0x03` through stdin
+  (like POSIX) rather than as a Windows console control event, so it's forwarded to the child like any other
+  keystroke rather than killing `ccx` itself.
+
+## Publishing
+
+The npm package is named `ccx-relay` (`ccx` itself is already taken on npm). The command you run stays `ccx` — that
+comes from the `bin` field, not the package name — so nothing about day-to-day usage changes.
+
+```bash
+npm login
+npm publish
+```
+
+For subsequent releases:
+
+```bash
+npm version patch   # or minor / major
+npm publish
+```
+
+`npm version patch` bumps the version in `package.json`, creates a git commit and tag (if this is a git repo), which
+you can then push along with the new publish.
