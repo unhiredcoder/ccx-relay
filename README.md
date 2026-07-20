@@ -30,41 +30,36 @@ trying can already be spoken for by one of them. Plain typed text has no such co
 ## Install
 
 ```bash
-git clone <this repo, or just use the folder you already have>
-cd ccx
-npm install
+npm install -g ccx-relay
 ```
 
-## Configure
+## Setup
 
-`ccx` is a standalone global tool — its config lives with the package itself, never in your project folders.
+Run the one-time setup wizard:
 
 ```bash
-copy .env.example .env    # Windows
-# cp .env.example .env    # macOS/Linux
+ccx init
 ```
 
-Edit `.env` (in this package's own folder) and set:
+This will prompt for your Gemini API key (get one at https://aistudio.google.com/apikey), validate it, let you pick a model, and save config to your user directory (`%APPDATA%\ccx\config.json` on Windows, `~/.config/ccx/config.json` on macOS/Linux). Config survives npm upgrades.
 
-| Variable         | Required | Default              | Description                                                        |
-|------------------|----------|-----------------------|----------------------------------------------------------------------|
-| `GEMINI_API_KEY` | Yes      | —                     | Your Gemini API key.                                                |
-| `GEMINI_MODEL`   | No       | `gemini-3.5-flash`    | Gemini model used to rewrite your prompt (must be a currently supported, non-deprecated model — check https://ai.google.dev/gemini-api/docs/pricing for the current free-tier list). |
-| `CCX_MARKER`     | No       | `;;`                  | Trailing text that triggers "enhance current line" when followed by Enter. |
-
-`ccx` loads `.env` from its own installation directory (`path.join(__dirname, '..', '.env')`), not from your current
-working directory — so running `ccx` from any project folder never requires (or creates) config there.
-
-## Link it globally
-
-From inside this folder:
+Other init commands:
 
 ```bash
-npm link
+ccx init --show    # print current config (key masked)
+ccx init --reset   # wipe config and start over
 ```
 
-This makes `ccx` available as a global command anywhere on your machine. You can now `cd` into any project and just
-run `ccx claude`.
+### Environment variable override
+
+You can skip `ccx init` and set env vars directly (useful for CI):
+
+```bash
+export GEMINI_API_KEY=AIza...
+export GEMINI_MODEL=gemini-2.5-flash   # optional
+export CCX_MARKER=;;                   # optional
+export CCX_TIMEOUT=8                   # optional, seconds
+```
 
 ## Usage
 
@@ -77,18 +72,16 @@ ccx bash             # or any other command — ccx just wraps argv
 While the wrapped process is running:
 
 - Type normally — every keystroke is forwarded to the child process exactly as if `ccx` weren't there.
-- To clean up the current line: type `;;` right after it, then press **Enter**. `ccx` strips the marker, sends the
-  rest to Gemini, shows `[ccx] enhancing...` briefly, and replaces the line in place with Gemini's rewrite — this
-  first Enter does *not* submit.
-- Review the rewritten line, then press **Enter** again (now with no trailing marker) to actually submit it to the
-  child process.
-- A plain line with no trailing `;;` submits immediately on Enter, exactly as if `ccx` weren't there.
+- **Trigger with marker:** type `;;` at the end of your line, then press **Enter**. ccx enhances the line and replaces it in place — this first Enter does *not* submit.
+- **Trigger with shortcut:** press **Alt+M** at any point on a non-empty line to enhance immediately without a marker.
+- After enhancement, a Braille spinner animates while Gemini rewrites your prompt, then shows `✓ Enhanced` on success or `✗ error message` on failure.
+- Review the rewritten line, then press **Enter** to submit it to the child process.
+- A plain line with no trigger submits immediately on Enter, exactly as if `ccx` weren't there.
 - Arrow keys, Ctrl+C, and other control sequences pass through untouched.
 
 ### Changing the marker
 
-Set `CCX_MARKER` in `.env` to any string that won't naturally appear at the end of a prompt (default `;;`). No
-source changes needed.
+Change `CCX_MARKER` via `ccx init` or env var (default `;;`). No source changes needed.
 
 ## Testing it locally
 
