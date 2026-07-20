@@ -16,6 +16,7 @@ function setupTestEnv() {
   // Override environment variables for test isolation
   process.env.APPDATA = tmpdir;
   process.env.HOME = tmpdir;
+  delete process.env.XDG_CONFIG_HOME;
   delete process.env.GEMINI_API_KEY;
   delete process.env.GEMINI_MODEL;
   delete process.env.CCX_MARKER;
