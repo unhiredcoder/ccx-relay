@@ -1,7 +1,7 @@
 {
   "type": "module",
   "name": "ccx-relay",
-  "version": "1.6.0",
+  "version": "1.6.1",
   "description": "Transparent PTY wrapper for Claude Code (or any CLI) that lets you refine your prompt with Gemini AI before submitting it, without leaving your terminal session.",
   "main": "bin/ccx.js",
   "bin": {
