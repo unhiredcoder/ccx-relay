@@ -14,9 +14,11 @@ const SYSTEM_PROMPT =
   'Output must contain nothing but the rewritten line itself.';
 
 function buildAuthHeaders(apiKey) {
-  return apiKey.startsWith('AQ.')
-    ? { 'Authorization': `Bearer ${apiKey}` }
-    : { 'x-goog-api-key': apiKey };
+  // The x-goog-api-key header authenticates both "Auth key" (AQ.-prefixed)
+  // and legacy "Standard key" (AIza-prefixed) formats. Authorization: Bearer
+  // does NOT work here - AQ. keys are not OAuth2 access tokens and return
+  // 401 Unauthorized when sent that way (confirmed against the live API).
+  return { 'x-goog-api-key': apiKey };
 }
 
 export async function listModels(apiKey) {
