@@ -52,32 +52,29 @@ export function createInputHandler({ marker, onEnhance, onSubmit, onPassthrough,
       if (byte === 0x1b) {
         // Try win32-input-mode sequence first
         const seq = parseWin32InputSeq(chunk, i);
-        if (seq !== null && seq.kd === 1) {
-          if (seq.vk === 13) {
-            // Win32 Enter
-            if (lineBuffer.endsWith(marker) && lineBuffer.trim().length > marker.length) {
-              onEnhance(lineBuffer.slice(0, -marker.length));
-              return;
-            } else {
-              onSubmit(lineBuffer);
-              lineBuffer = '';
-              onPassthrough(chunk.slice(i, i + seq.consumed));
+        if (seq !== null) {
+          if (seq.kd === 1) {
+            if (seq.vk === 13) {
+              // Win32 Enter
+              if (lineBuffer.endsWith(marker) && lineBuffer.trim().length > marker.length) {
+                onEnhance(lineBuffer.slice(0, -marker.length));
+                return;
+              } else {
+                onSubmit(lineBuffer);
+                lineBuffer = '';
+              }
+            } else if (seq.vk === 8) {
+              // Win32 Backspace
+              if (lineBuffer.length > 0) lineBuffer = lineBuffer.slice(0, -1);
+            } else if (seq.vk === 77 && (seq.cs & (0x0001 | 0x0002))) {
+              // Win32 Alt+M
+              if (lineBuffer.length > 0) {
+                onEnhance(lineBuffer);
+                return;
+              }
             }
-          } else if (seq.vk === 8) {
-            // Win32 Backspace
-            lineBuffer = lineBuffer.slice(0, -1);
-            onPassthrough(chunk.slice(i, i + seq.consumed));
-          } else if (seq.vk === 77 && (seq.cs & (0x0001 | 0x0002))) {
-            // Win32 Alt+M
-            if (lineBuffer.length > 0) {
-              onEnhance(lineBuffer);
-              return;
-            } else {
-              onPassthrough(chunk.slice(i, i + seq.consumed));
-            }
-          } else {
-            onPassthrough(chunk.slice(i, i + seq.consumed));
           }
+          onPassthrough(chunk.slice(i, i + seq.consumed));
           i += seq.consumed;
           continue;
         }
