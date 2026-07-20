@@ -32,7 +32,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/YOUR_USERNAME/ccx-relay.git"
+    "url": "https://github.com/unhiredcoder/ccx-relay.git"
   },
   "engines": {
     "node": ">=18"
