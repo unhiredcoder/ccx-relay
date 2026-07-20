@@ -6,10 +6,10 @@ function makeHandler(overrides = {}) {
   const events = [];
   const h = createInputHandler({
     marker: ';;',
-    onEnhance:    line  => events.push({ type: 'enhance', line }),
-    onSubmit:     line  => events.push({ type: 'submit',  line }),
-    onPassthrough:chunk => events.push({ type: 'pass',    chunk }),
-    onCtrlC:      ()    => events.push({ type: 'ctrlc' }),
+    onEnhance:    (line, cursor) => events.push({ type: 'enhance', line, cursor }),
+    onSubmit:     line           => events.push({ type: 'submit',  line }),
+    onPassthrough:chunk          => events.push({ type: 'pass',    chunk }),
+    onCtrlC:      ()             => events.push({ type: 'ctrlc' }),
     ...overrides,
   });
   return { h, events };
@@ -91,4 +91,71 @@ test('win32-input-mode Alt+M (VK=77 kd=1 cs=2) triggers enhance', () => {
   h.processChunk(Buffer.from('fix bug'));
   h.processChunk(Buffer.from('\x1b[77;50;109;1;2;1_'));
   assert.ok(events.find(e => e.type === 'enhance' && e.line === 'fix bug'));
+});
+
+// Cursor tracking tests
+
+test('left arrow moves cursor: insert at cursor inserts mid-buffer', () => {
+  const { h, events } = makeHandler();
+  h.processChunk(Buffer.from('helo'));           // buffer='helo', cursor=4
+  h.processChunk(Buffer.from([0x1b, 0x5b, 0x44])); // ESC[D = left, cursor=3
+  h.processChunk(Buffer.from('l'));              // insert at 3 → 'hello', cursor=4
+  h.processChunk(Buffer.from([0x0d]));
+  assert.ok(events.find(e => e.type === 'submit' && e.line === 'hello'));
+});
+
+test('Home key moves cursor to start', () => {
+  const { h, events } = makeHandler();
+  h.processChunk(Buffer.from('ello'));           // buffer='ello', cursor=4
+  h.processChunk(Buffer.from([0x1b, 0x5b, 0x48])); // ESC[H = Home, cursor=0
+  h.processChunk(Buffer.from('h'));              // insert at 0 → 'hello'
+  h.processChunk(Buffer.from([0x0d]));
+  assert.ok(events.find(e => e.type === 'submit' && e.line === 'hello'));
+});
+
+test('End key moves cursor to end', () => {
+  const { h, events } = makeHandler();
+  h.processChunk(Buffer.from('hello'));
+  h.processChunk(Buffer.from([0x1b, 0x5b, 0x48])); // Home → cursor=0
+  h.processChunk(Buffer.from([0x1b, 0x5b, 0x46])); // ESC[F = End → cursor=5
+  h.processChunk(Buffer.from(' world'));
+  h.processChunk(Buffer.from([0x0d]));
+  assert.ok(events.find(e => e.type === 'submit' && e.line === 'hello world'));
+});
+
+test('backspace at cursor deletes char before cursor', () => {
+  const { h, events } = makeHandler();
+  h.processChunk(Buffer.from('helllo'));          // buffer='helllo', cursor=6
+  h.processChunk(Buffer.from([0x1b, 0x5b, 0x44])); // left, cursor=5
+  h.processChunk(Buffer.from([0x1b, 0x5b, 0x44])); // left, cursor=4
+  h.processChunk(Buffer.from([0x7f]));            // backspace at 4 → 'hello', cursor=3
+  h.processChunk(Buffer.from([0x0d]));
+  assert.ok(events.find(e => e.type === 'submit' && e.line === 'hello'));
+});
+
+test('setLine syncs internal buffer and cursor', () => {
+  const { h, events } = makeHandler();
+  h.processChunk(Buffer.from('rough text'));
+  h.setLine('improved text');
+  h.processChunk(Buffer.from([0x0d]));
+  assert.ok(events.find(e => e.type === 'submit' && e.line === 'improved text'));
+});
+
+test('win32 left arrow tracks cursor: insert mid-buffer', () => {
+  const { h, events } = makeHandler();
+  h.processChunk(Buffer.from('helo'));
+  // Win32 Left: VK=37, SC=0, UC=0, kd=1, cs=0, rc=1
+  h.processChunk(Buffer.from('\x1b[37;0;0;1;0;1_'));
+  h.processChunk(Buffer.from('l'));
+  h.processChunk(Buffer.from([0x0d]));
+  assert.ok(events.find(e => e.type === 'submit' && e.line === 'hello'));
+});
+
+test('enhance passes cursor position', () => {
+  const { h, events } = makeHandler();
+  h.processChunk(Buffer.from('fix bug'));         // cursor=7
+  h.processChunk(Buffer.from([0x1b, 0x6d]));      // Alt+M
+  const ev = events.find(e => e.type === 'enhance');
+  assert.ok(ev);
+  assert.equal(ev.cursor, 7);
 });

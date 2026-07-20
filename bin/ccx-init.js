@@ -3,11 +3,10 @@
 import { createInterface } from 'node:readline';
 import { rmSync, existsSync } from 'node:fs';
 import { load, save, configPath } from '../src/config.js';
-import { enhance } from '../src/gemini.js';
+import { enhance, listModels } from '../src/gemini.js';
 
 const args = process.argv.slice(2);
 
-// Hidden input helper for API key
 async function promptHidden(question) {
   return new Promise(resolve => {
     process.stdout.write(question);
@@ -37,23 +36,19 @@ async function promptHidden(question) {
   });
 }
 
-// Regular prompt helper
 async function prompt(rl, question) {
   return new Promise(resolve => rl.question(question, resolve));
 }
 
-// Mask API key: show first 6 chars + ****...
 function maskKey(key) {
   if (!key) return '(not set)';
   if (key.length <= 6) return key + '****...';
   return key.slice(0, 6) + '****...';
 }
 
-// Show current config
 function showConfig() {
   const config = load();
   const path = configPath();
-
   console.log(`Config: ${path}\n`);
   console.log(`  geminiApiKey:   ${maskKey(config.geminiApiKey)}`);
   console.log(`  geminiModel:    ${config.geminiModel}`);
@@ -61,30 +56,22 @@ function showConfig() {
   console.log(`  timeoutSeconds: ${config.timeoutSeconds}`);
 }
 
-// Reset config
 function resetConfig() {
   const path = configPath();
-
   if (existsSync(path)) {
     rmSync(path);
-    console.log('Config reset. Run `ccx init` to set up again.');
+    console.log('Config reset. Run `ccx-init` to set up again.');
   } else {
     console.log('No config file found — nothing to reset.');
   }
 }
 
-// Interactive wizard
 async function runWizard() {
   console.log('\n  Welcome to ccx setup\n');
 
-  // Step 1: Prompt for API key
   const key = await promptHidden('  API key: ');
-  if (!key) {
-    console.log('No key entered. Aborting.');
-    process.exit(1);
-  }
+  if (!key) { console.log('No key entered. Aborting.'); process.exit(1); }
 
-  // Step 2: Test the key
   process.stdout.write('  Testing key... ');
   try {
     await enhance('hello', { geminiApiKey: key, geminiModel: 'gemini-2.5-flash', timeoutSeconds: 10 });
@@ -94,49 +81,45 @@ async function runWizard() {
     process.exit(1);
   }
 
-  // Step 3: Model picker
-  const models = [
-    'gemini-2.5-flash',
-    'gemini-1.5-flash',
-    'gemini-2.5-pro'
-  ];
+  // Fetch available models, fall back to hardcoded list
+  let models;
+  process.stdout.write('  Fetching available models... ');
+  try {
+    const all = await listModels(key);
+    models = all.filter(m => m.includes('gemini')).slice(0, 10);
+    if (models.length === 0) throw new Error('empty');
+    console.log(`\x1b[32m✓\x1b[0m ${models.length} found`);
+  } catch (_) {
+    models = ['gemini-2.5-flash', 'gemini-1.5-flash', 'gemini-2.5-pro'];
+    console.log('(using defaults)');
+  }
 
-  const rl = createInterface({
-    input: process.stdin,
-    output: process.stdout,
-  });
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
 
   console.log('');
   console.log('  Model:');
-  console.log('  1) gemini-2.5-flash (default)');
-  console.log('  2) gemini-1.5-flash');
-  console.log('  3) gemini-2.5-pro');
+  models.forEach((m, i) => {
+    console.log(`  ${i + 1}) ${m}${i === 0 ? ' (default)' : ''}`);
+  });
 
   const modelChoice = await prompt(rl, '  Choice [1]: ');
-  const modelIndex = modelChoice.trim() === '' || modelChoice.trim() === '1' ? 0 :
-                    modelChoice.trim() === '2' ? 1 :
-                    modelChoice.trim() === '3' ? 2 : 0;
+  const idx = parseInt(modelChoice.trim(), 10);
+  const modelIndex = (!idx || idx < 1 || idx > models.length) ? 0 : idx - 1;
   const model = models[modelIndex];
 
-  // Step 4: Trigger marker
   const markerAnswer = await prompt(rl, '  Trigger marker [;;]: ');
   const marker = markerAnswer.trim() || ';;';
 
-  // Step 5: Timeout seconds
   const timeoutAnswer = await prompt(rl, '  Timeout seconds [8]: ');
   const timeoutSeconds = timeoutAnswer.trim() === '' ? 8 : (parseInt(timeoutAnswer, 10) || 8);
 
   rl.close();
 
-  // Step 6: Save config
   save({ geminiApiKey: key, geminiModel: model, marker, timeoutSeconds });
-
-  // Step 7: Success message
   console.log(`\n  Config saved to ${configPath()}`);
   console.log('  Run `ccx claude` to start.\n');
 }
 
-// Main dispatch
 if (args.length === 0) {
   runWizard();
 } else if (args[0] === '--show') {

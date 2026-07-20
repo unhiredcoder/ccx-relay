@@ -1,27 +1,17 @@
 const BRAILLE_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
-const FRAME_INTERVAL = 80; // ms
+const FRAME_INTERVAL = 80;
 
 let spinnerInterval = null;
 let currentFrame = 0;
 
-/**
- * Draws the status line on stderr with cursor save/restore
- */
 function drawStatusLine(content) {
-  const ansi = `\x1b[s\r\n\x1b[2K${content}\x1b[u`;
-  process.stderr.write(ansi);
+  const row = process.stdout.rows || 24;
+  process.stderr.write(`\x1b[s\x1b[${row};1H\x1b[2K${content}\x1b[u`);
 }
 
-/**
- * Starts animating the Braille spinner on stderr
- */
 export function start() {
-  // Reset frame counter and stop any existing interval
   currentFrame = 0;
-  if (spinnerInterval) {
-    clearInterval(spinnerInterval);
-  }
-
+  if (spinnerInterval) clearInterval(spinnerInterval);
   spinnerInterval = setInterval(() => {
     const frame = BRAILLE_FRAMES[currentFrame % BRAILLE_FRAMES.length];
     drawStatusLine(`${frame} Enhancing prompt...`);
@@ -29,37 +19,16 @@ export function start() {
   }, FRAME_INTERVAL);
 }
 
-/**
- * Stops the spinner and shows a final status message
- */
 export async function stop(state, message) {
-  // Clear the spinner interval
-  if (spinnerInterval) {
-    clearInterval(spinnerInterval);
-    spinnerInterval = null;
-  }
-
-  // Draw final state based on success/error
+  if (spinnerInterval) { clearInterval(spinnerInterval); spinnerInterval = null; }
   const symbol = state === 'success' ? '✓' : '✗';
   const colorCode = state === 'success' ? '32' : '31';
-  const statusLine = `\x1b[${colorCode}m${symbol} ${message}\x1b[0m`;
-
-  drawStatusLine(statusLine);
-
-  // Wait 400ms
+  drawStatusLine(`\x1b[${colorCode}m${symbol} ${message}\x1b[0m`);
   await new Promise(r => setTimeout(r, 400));
-
-  // Clear the status line
   drawStatusLine('');
 }
 
-/**
- * Immediately clears the status line and stops spinner
- */
 export function clear() {
-  if (spinnerInterval) {
-    clearInterval(spinnerInterval);
-    spinnerInterval = null;
-  }
+  if (spinnerInterval) { clearInterval(spinnerInterval); spinnerInterval = null; }
   drawStatusLine('');
 }
