@@ -66,7 +66,7 @@ export function createInputHandler({ marker, onEnhance, onSubmit, onPassthrough,
             } else if (seq.vk === 8) {
               // Win32 Backspace
               if (lineBuffer.length > 0) lineBuffer = lineBuffer.slice(0, -1);
-            } else if (seq.vk === 77 && (seq.cs & (0x0001 | 0x0002))) {
+            } else if (seq.vk === 77 && (seq.cs & (0x0001 | 0x0002)) && !(seq.cs & (0x0004 | 0x0008))) {
               // Win32 Alt+M
               if (lineBuffer.length > 0) {
                 onEnhance(lineBuffer);

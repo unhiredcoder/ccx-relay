@@ -60,15 +60,11 @@ export function load() {
   if (process.env.GEMINI_MODEL) {
     result.geminiModel = process.env.GEMINI_MODEL;
   }
-  if (process.env.CCX_MARKER) {
-    result.marker = process.env.CCX_MARKER;
-  }
-  if (process.env.CCX_TIMEOUT) {
-    result.timeoutSeconds = Number(process.env.CCX_TIMEOUT);
-  }
+  const rawMarker = (process.env.CCX_MARKER !== undefined ? process.env.CCX_MARKER : null) || result.marker || defaults.marker;
+  result.marker = rawMarker.length > 0 ? rawMarker : defaults.marker;
 
-  // Ensure timeoutSeconds is a number
-  result.timeoutSeconds = Number(result.timeoutSeconds);
+  const rawTimeout = Number(process.env.CCX_TIMEOUT || result.timeoutSeconds || defaults.timeoutSeconds);
+  result.timeoutSeconds = (isFinite(rawTimeout) && rawTimeout > 0) ? rawTimeout : defaults.timeoutSeconds;
 
   return result;
 }

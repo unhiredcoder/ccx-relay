@@ -14,21 +14,24 @@ async function promptHidden(question) {
     const rl = createInterface({ input: process.stdin, output: null, terminal: false });
     if (process.stdin.isTTY) process.stdin.setRawMode(true);
     let input = '';
-    process.stdin.on('data', function onData(ch) {
-      ch = ch.toString();
-      if (ch === '\r' || ch === '\n') {
-        if (process.stdin.isTTY) process.stdin.setRawMode(false);
-        process.stdout.write('\n');
-        process.stdin.removeListener('data', onData);
-        rl.close();
-        resolve(input);
-      } else if (ch === '\x7f' || ch === '\x08') {
-        if (input.length > 0) { input = input.slice(0, -1); process.stdout.write('\b \b'); }
-      } else if (ch === '\x03') {
-        process.exit(0);
-      } else {
-        input += ch;
-        process.stdout.write('*');
+    process.stdin.on('data', function onData(buf) {
+      for (let i = 0; i < buf.length; i++) {
+        const byte = buf[i];
+        if (byte === 0x0d || byte === 0x0a) {
+          if (process.stdin.isTTY) process.stdin.setRawMode(false);
+          process.stdout.write('\n');
+          process.stdin.removeListener('data', onData);
+          rl.close();
+          resolve(input);
+          return;
+        } else if (byte === 0x7f || byte === 0x08) {
+          if (input.length > 0) { input = input.slice(0, -1); process.stdout.write('\b \b'); }
+        } else if (byte === 0x03) {
+          process.exit(0);
+        } else if (byte >= 0x20) {
+          input += String.fromCharCode(byte);
+          process.stdout.write('*');
+        }
       }
     });
   });
