@@ -5,15 +5,18 @@
   "description": "Transparent PTY wrapper for Claude Code (or any CLI) that lets you refine your prompt with Gemini AI before submitting it, without leaving your terminal session.",
   "main": "bin/ccx.js",
   "bin": {
-    "ccx": "bin/ccx.js"
+    "ccx": "bin/ccx.js",
+    "ccx-init": "bin/ccx-init.js"
   },
   "files": [
     "bin",
+    "src",
     "README.md",
     ".env.example"
   ],
   "scripts": {
-    "test": "node --check bin/ccx.js"
+    "test": "node --test test/**/*.test.js",
+    "prepublishOnly": "npm test"
   },
   "keywords": [
     "cli",
