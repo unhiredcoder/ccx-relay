@@ -23,12 +23,16 @@ export async function enhance(text, config) {
   try {
     timeoutId = setTimeout(() => controller.abort(), timeoutSeconds * 1000);
 
+    const authHeaders = geminiApiKey.startsWith('AQ.')
+      ? { 'Authorization': `Bearer ${geminiApiKey}` }
+      : { 'x-goog-api-key': geminiApiKey };
+
     const response = await fetch(url, {
       method: 'POST',
       signal: controller.signal,
       headers: {
         'Content-Type': 'application/json',
-        'x-goog-api-key': geminiApiKey,
+        ...authHeaders,
       },
       body: JSON.stringify({
         contents: [{ parts: [{ text: PROMPT_PREFIX + text }] }],
