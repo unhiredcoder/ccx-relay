@@ -159,3 +159,18 @@ test('enhance passes cursor position', () => {
   assert.ok(ev);
   assert.equal(ev.cursor, 7);
 });
+
+test('win32 Shift+Enter appends newline and accumulates multi-line buffer', () => {
+  const { h, events } = makeHandler();
+  h.processChunk(Buffer.from('line one'));
+  // Win32 Shift+Enter: VK=13, SC=28, UC=13, kd=1, cs=16 (0x0010=SHIFT), rc=1
+  h.processChunk(Buffer.from('\x1b[13;28;13;1;16;1_'));
+  assert.equal(events.filter(e => e.type === 'submit').length, 0);
+  assert.equal(events.filter(e => e.type === 'enhance').length, 0);
+  // Now type second line with marker and plain Enter
+  h.processChunk(Buffer.from('line two;;'));
+  h.processChunk(Buffer.from('\x1b[13;0;13;1;0;1_'));
+  const ev = events.find(e => e.type === 'enhance');
+  assert.ok(ev, 'should trigger enhance');
+  assert.equal(ev.line, 'line one\nline two;;');
+});

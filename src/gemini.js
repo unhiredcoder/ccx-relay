@@ -7,11 +7,11 @@ export class NetworkError extends Error {}
 const SYSTEM_PROMPT =
   'Rewrite the following text to be grammatically correct and clearer, ' +
   'while preserving its original intent and meaning exactly. ' +
-  'This is a single line typed into a terminal prompt, not a chat message - ' +
-  'respond with EXACTLY ONE rewritten version as a single plain-text line. ' +
+  'This is text typed into a terminal prompt — it may be one line or multiple lines. ' +
+  'Respond with EXACTLY ONE rewritten version preserving the same line structure and count. ' +
   'Do not offer multiple options or alternatives. Do not add headings, bullet ' +
   'points, markdown formatting, quotes, explanations, or any commentary. ' +
-  'Output must contain nothing but the rewritten line itself.';
+  'Output must contain nothing but the rewritten text itself.';
 
 function isGroq(apiKey) { return apiKey.startsWith('gsk_'); }
 
@@ -78,7 +78,7 @@ async function enhanceGroq(text, config, context) {
           { role: 'system', content: SYSTEM_PROMPT },
           { role: 'user', content: userContent },
         ],
-        max_tokens: 256,
+        max_tokens: 2048,
       }),
     });
 

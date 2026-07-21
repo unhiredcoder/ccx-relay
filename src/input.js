@@ -55,7 +55,11 @@ export function createInputHandler({ marker, onEnhance, onSubmit, onPassthrough,
         if (seq !== null) {
           if (seq.kd === 1) {
             if (seq.vk === 13) {
-              if (lineBuffer.endsWith(marker) && lineBuffer.trim().length > marker.length) {
+              if (seq.cs & 0x0010) {
+                // Shift+Enter: append newline, accumulate multi-line buffer
+                lineBuffer += '\n';
+                cursor = lineBuffer.length;
+              } else if (lineBuffer.endsWith(marker) && lineBuffer.trim().length > marker.length) {
                 onEnhance(lineBuffer, cursor);
                 return;
               } else {

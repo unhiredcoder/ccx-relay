@@ -116,6 +116,20 @@ process.stdout.on('resize', () => {
 process.stdin.setRawMode(true);
 process.stdin.resume();
 
+function eraseInput(line, cursor) {
+  const parts = line.split('\n');
+  const extraLines = parts.length - 1;
+  if (extraLines === 0) {
+    const charsAfterCursor = line.length - cursor;
+    if (charsAfterCursor > 0) ptyProcess.write(`\x1b[${charsAfterCursor}C`);
+    ptyProcess.write(Buffer.alloc(line.length, 0x7f));
+  } else {
+    ptyProcess.write('\x1b[2K');
+    for (let i = 0; i < extraLines; i++) ptyProcess.write('\x1b[1A\x1b[2K');
+    ptyProcess.write('\x1b[G');
+  }
+}
+
 const handler = createInputHandler({
   marker: config.marker,
 
@@ -135,20 +149,14 @@ const handler = createInputHandler({
       else if (err instanceof TimeoutError) msg = `Timed out after ${config.timeoutSeconds}s — original restored`;
       else if (err instanceof NetworkError) msg = 'No connection — original restored';
       await spinnerStop('error', msg);
-      // Move cursor to end of line then erase, restore original
-      const charsAfterCursor = line.length - cursor;
-      if (charsAfterCursor > 0) ptyProcess.write(`\x1b[${charsAfterCursor}C`);
-      ptyProcess.write(Buffer.alloc(line.length, 0x7f));
+      eraseInput(line, cursor);
       ptyProcess.write(toSend);
       handler.setBusy(false);
       handler.setLine(toSend);
       return;
     }
     await spinnerStop('success', 'Enhanced');
-    // Move cursor to end of line then erase, write improved
-    const charsAfterCursor = line.length - cursor;
-    if (charsAfterCursor > 0) ptyProcess.write(`\x1b[${charsAfterCursor}C`);
-    ptyProcess.write(Buffer.alloc(line.length, 0x7f));
+    eraseInput(line, cursor);
     ptyProcess.write(improved);
     handler.setBusy(false);
     handler.setLine(improved);
