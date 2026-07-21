@@ -72,9 +72,10 @@ async function runWizard() {
   const key = await promptHidden('  API key: ');
   if (!key) { console.log('No key entered. Aborting.'); process.exit(1); }
 
+  const testModel = key.startsWith('gsk_') ? 'llama-3.1-8b-instant' : 'gemini-2.5-flash';
   process.stdout.write('  Testing key... ');
   try {
-    await enhance('hello', { geminiApiKey: key, geminiModel: 'gemini-2.5-flash', timeoutSeconds: 10 });
+    await enhance('hello', { geminiApiKey: key, geminiModel: testModel, timeoutSeconds: 10 });
     console.log('\x1b[32m✓ Valid\x1b[0m');
   } catch (err) {
     if (err instanceof RateLimitError) {

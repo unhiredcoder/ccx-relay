@@ -13,15 +13,25 @@ const SYSTEM_PROMPT =
   'points, markdown formatting, quotes, explanations, or any commentary. ' +
   'Output must contain nothing but the rewritten line itself.';
 
+function isGroq(apiKey) { return apiKey.startsWith('gsk_'); }
+
 function buildAuthHeaders(apiKey) {
-  // The x-goog-api-key header authenticates both "Auth key" (AQ.-prefixed)
-  // and legacy "Standard key" (AIza-prefixed) formats. Authorization: Bearer
-  // does NOT work here - AQ. keys are not OAuth2 access tokens and return
-  // 401 Unauthorized when sent that way (confirmed against the live API).
-  return { 'x-goog-api-key': apiKey };
+  return isGroq(apiKey)
+    ? { 'Authorization': `Bearer ${apiKey}` }
+    : { 'x-goog-api-key': apiKey };
 }
 
 export async function listModels(apiKey) {
+  if (isGroq(apiKey)) {
+    return [
+      'llama-3.1-8b-instant',
+      'llama-3.3-70b-versatile',
+      'gemma2-9b-it',
+      'llama3-8b-8192',
+      'llama-3.1-70b-versatile',
+    ];
+  }
+
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 10000);
   try {
@@ -45,7 +55,56 @@ export async function listModels(apiKey) {
   }
 }
 
-export async function enhance(text, config, context = null) {
+async function enhanceGroq(text, config, context) {
+  const { geminiApiKey: apiKey, geminiModel: model, timeoutSeconds } = config;
+  const url = 'https://api.groq.com/openai/v1/chat/completions';
+  const controller = new AbortController();
+  let timeoutId;
+
+  const userContent = context
+    ? `Recent terminal context:\n${context}\n\nText:\n${text}`
+    : text;
+
+  try {
+    timeoutId = setTimeout(() => controller.abort(), timeoutSeconds * 1000);
+
+    const response = await fetch(url, {
+      method: 'POST',
+      signal: controller.signal,
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+      body: JSON.stringify({
+        model,
+        messages: [
+          { role: 'system', content: SYSTEM_PROMPT },
+          { role: 'user', content: userContent },
+        ],
+        max_tokens: 256,
+      }),
+    });
+
+    if (!response.ok) {
+      if (response.status === 429) throw new RateLimitError('Quota exceeded');
+      else if (response.status === 401 || response.status === 403) throw new AuthError('Invalid key — run ccx-init');
+      else if (response.status === 404) throw new ModelError('Model not found — run ccx-init');
+      else throw new NetworkError(`API error ${response.status}`);
+    }
+
+    const data = await response.json();
+    const result = data.choices[0].message.content.trim();
+    if (!result) throw new NetworkError('Empty response');
+    return result;
+  } catch (err) {
+    if (err.name === 'AbortError') throw new TimeoutError(`Timed out after ${timeoutSeconds}s`);
+    if (err instanceof RateLimitError || err instanceof AuthError ||
+        err instanceof ModelError || err instanceof NetworkError ||
+        err instanceof TimeoutError) throw err;
+    throw new NetworkError('No connection');
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+async function enhanceGemini(text, config, context) {
   const { geminiApiKey, geminiModel, timeoutSeconds } = config;
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent`;
   const controller = new AbortController();
@@ -68,8 +127,8 @@ export async function enhance(text, config, context = null) {
     if (!response.ok) {
       const body = await response.text();
       if (response.status === 429) throw new RateLimitError('Quota exceeded');
-      else if (response.status === 401 || response.status === 403) throw new AuthError('Invalid key — run ccx init');
-      else if (response.status === 404) throw new ModelError('Model not found — run ccx init');
+      else if (response.status === 401 || response.status === 403) throw new AuthError('Invalid key — run ccx-init');
+      else if (response.status === 404) throw new ModelError('Model not found — run ccx-init');
       else throw new NetworkError(`API error ${response.status}: ${body.substring(0, 200)}`);
     }
 
@@ -86,4 +145,10 @@ export async function enhance(text, config, context = null) {
   } finally {
     clearTimeout(timeoutId);
   }
+}
+
+export async function enhance(text, config, context = null) {
+  return isGroq(config.geminiApiKey)
+    ? enhanceGroq(text, config, context)
+    : enhanceGemini(text, config, context);
 }
