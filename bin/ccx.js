@@ -116,10 +116,40 @@ process.stdout.on('resize', () => {
 process.stdin.setRawMode(true);
 process.stdin.resume();
 
+// Windows Console API CONTROL_KEY_STATE flag (see README's win32-input-mode notes;
+// must match SHIFT_PRESSED in src/input.js).
+const SHIFT_PRESSED = 0x0010;
+
+function win32KeyEvent(vk, uc, keyDown, cs) {
+  return `\x1b[${vk};0;${uc};${keyDown ? 1 : 0};${cs};1_`;
+}
+
+// A raw '\r'/'\n' byte written into the pty reads to the wrapped app as a plain
+// Enter keypress, which submits instead of inserting a line break — so a
+// multi-line rewrite (or the original multi-line prompt, on restore-after-error)
+// would get cut off mid-line and the remainder typed as a new, separately
+// submitted line. Encode each embedded newline as a synthetic Shift+Enter
+// win32-input-mode sequence instead, matching how a real Shift+Enter keypress
+// already arrives (see the SHIFT_PRESSED branch in src/input.js).
+function writeTextPreservingLines(text) {
+  const lines = text.split('\n');
+  lines.forEach((line, idx) => {
+    if (line) ptyProcess.write(line);
+    if (idx < lines.length - 1) {
+      if (isWindows) {
+        ptyProcess.write(win32KeyEvent(13, 13, true, SHIFT_PRESSED));
+        ptyProcess.write(win32KeyEvent(13, 13, false, SHIFT_PRESSED));
+      } else {
+        ptyProcess.write('\n');
+      }
+    }
+  });
+}
+
 const handler = createInputHandler({
   marker: config.marker,
 
-  onEnhance: async (line, cursor) => {
+  onEnhance: async (line, cursor, token) => {
     const toSend = line.endsWith(config.marker) ? line.slice(0, -config.marker.length) : line;
     handler.setBusy(true);
     spinnerStart();
@@ -128,6 +158,10 @@ const handler = createInputHandler({
       const context = contextLines.length > 0 ? contextLines.join('\n') : null;
       improved = await enhance(toSend, config, context);
     } catch (err) {
+      // The user may have Ctrl+C'd out (or otherwise moved on) while this was
+      // in flight — reset() bumps the epoch, so an old token here means
+      // whatever we'd write back no longer belongs on the current line.
+      if (!handler.isCurrent(token)) return;
       let msg = 'Enhancement failed';
       if (err instanceof RateLimitError) msg = 'Quota exceeded';
       else if (err instanceof AuthError)    msg = 'Invalid key — run ccx-init';
@@ -139,19 +173,20 @@ const handler = createInputHandler({
       const charsAfterCursor = line.length - cursor;
       if (charsAfterCursor > 0) ptyProcess.write(`\x1b[${charsAfterCursor}C`);
       ptyProcess.write(Buffer.alloc(line.length, 0x7f));
-      ptyProcess.write(toSend);
-      handler.setBusy(false);
+      writeTextPreservingLines(toSend);
       handler.setLine(toSend);
+      handler.setBusy(false);
       return;
     }
+    if (!handler.isCurrent(token)) return;
     await spinnerStop('success', 'Enhanced');
     // Move cursor to end of line then erase, write improved
     const charsAfterCursor = line.length - cursor;
     if (charsAfterCursor > 0) ptyProcess.write(`\x1b[${charsAfterCursor}C`);
     ptyProcess.write(Buffer.alloc(line.length, 0x7f));
-    ptyProcess.write(improved);
-    handler.setBusy(false);
+    writeTextPreservingLines(improved);
     handler.setLine(improved);
+    handler.setBusy(false);
   },
 
   onSubmit: (_line) => {},

@@ -78,6 +78,11 @@ While the wrapped process is running:
 - Review the rewritten line, then press **Enter** to submit it to the child process.
 - A plain line with no trigger submits immediately on Enter, exactly as if `ccx` weren't there.
 - Arrow keys, Ctrl+C, and other control sequences pass through untouched.
+- **Multi-line prompts:** Shift+Enter adds a line break without submitting (same as in a plain Claude Code session).
+  `ccx` tracks the whole multi-line prompt internally, so the marker/Alt+M trigger enhances the entire thing, and a
+  multi-line rewrite gets spliced back in as multiple soft-broken lines rather than being submitted early.
+- Typing ahead while a spinner is running (e.g. mashing Alt+M again) is queued and replayed once the enhancement
+  finishes, instead of leaking into the child mid-rewrite. Ctrl+C still interrupts immediately even while enhancing.
 
 ### Changing the marker
 

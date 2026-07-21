@@ -6,7 +6,7 @@ function makeHandler(overrides = {}) {
   const events = [];
   const h = createInputHandler({
     marker: ';;',
-    onEnhance:    (line, cursor) => events.push({ type: 'enhance', line, cursor }),
+    onEnhance:    (line, cursor, token) => events.push({ type: 'enhance', line, cursor, token }),
     onSubmit:     line           => events.push({ type: 'submit',  line }),
     onPassthrough:chunk          => events.push({ type: 'pass',    chunk }),
     onCtrlC:      ()             => events.push({ type: 'ctrlc' }),
@@ -158,4 +158,77 @@ test('enhance passes cursor position', () => {
   const ev = events.find(e => e.type === 'enhance');
   assert.ok(ev);
   assert.equal(ev.cursor, 7);
+});
+
+// Shift+Enter / multi-line composition
+
+test('win32 Shift+Enter (cs=16) inserts newline instead of submitting or enhancing', () => {
+  const { h, events } = makeHandler();
+  h.processChunk(Buffer.from('line one'));
+  // Win32 Shift+Enter: VK=13, SC=0, UC=13, kd=1, cs=16 (SHIFT_PRESSED), rc=1
+  h.processChunk(Buffer.from('\x1b[13;0;13;1;16;1_'));
+  h.processChunk(Buffer.from('line two'));
+  h.processChunk(Buffer.from([0x0d])); // plain Enter submits the whole thing
+  assert.ok(!events.find(e => e.type === 'enhance'));
+  assert.ok(events.find(e => e.type === 'submit' && e.line === 'line one\nline two'));
+});
+
+test('win32 Shift+Enter still passes the raw sequence through to the child', () => {
+  const { h, events } = makeHandler();
+  h.processChunk(Buffer.from('line one'));
+  h.processChunk(Buffer.from('\x1b[13;0;13;1;16;1_'));
+  const passed = events.filter(e => e.type === 'pass').map(e => e.chunk.toString());
+  assert.ok(passed.includes('\x1b[13;0;13;1;16;1_'));
+});
+
+test('multi-line prompt: Shift+Enter composes lines, marker + Enter enhances the whole thing', () => {
+  const { h, events } = makeHandler();
+  h.processChunk(Buffer.from('line one'));
+  h.processChunk(Buffer.from('\x1b[13;0;13;1;16;1_')); // Shift+Enter
+  h.processChunk(Buffer.from('line two;;'));
+  h.processChunk(Buffer.from([0x0d])); // plain Enter — marker is at the true end now
+  assert.ok(!events.find(e => e.type === 'submit'));
+  assert.ok(events.find(e => e.type === 'enhance' && e.line === 'line one\nline two;;'));
+});
+
+// Busy-period input queuing
+
+test('input received while busy is queued, not forwarded live', () => {
+  const { h, events } = makeHandler();
+  h.setBusy(true);
+  h.processChunk(Buffer.from('typed during enhance'));
+  assert.equal(events.filter(e => e.type === 'pass').length, 0);
+});
+
+test('queued input replays once busy clears, against the post-enhance line', () => {
+  const { h, events } = makeHandler();
+  h.processChunk(Buffer.from('rough text'));
+  h.setBusy(true);
+  h.processChunk(Buffer.from([0x1b, 0x6d])); // mashed Alt+M while busy — should not reach the child raw
+  h.setLine('improved text');
+  h.setBusy(false);
+  assert.ok(!events.find(e => e.type === 'pass' && e.chunk.equals(Buffer.from([0x1b, 0x6d]))));
+  const ev = events.find(e => e.type === 'enhance');
+  assert.ok(ev);
+  assert.equal(ev.line, 'improved text');
+});
+
+test('a lone Ctrl+C still gets through immediately while busy', () => {
+  const { h, events } = makeHandler();
+  h.setBusy(true);
+  h.processChunk(Buffer.from([0x03]));
+  assert.ok(events.find(e => e.type === 'ctrlc'));
+  assert.ok(events.find(e => e.type === 'pass' && e.chunk.equals(Buffer.from([0x03]))));
+});
+
+// Epoch / stale-completion guard
+
+test('isCurrent(token) is true for the epoch at call time, false after reset()', () => {
+  const { h, events } = makeHandler();
+  h.processChunk(Buffer.from('fix bug'));
+  h.processChunk(Buffer.from([0x1b, 0x6d]));
+  const token = events.find(e => e.type === 'enhance').token;
+  assert.equal(h.isCurrent(token), true);
+  h.reset();
+  assert.equal(h.isCurrent(token), false);
 });
