@@ -38,7 +38,7 @@ npm install -g ccx-relay
 Run the one-time setup wizard:
 
 ```bash
-ccx init
+ccx-init
 ```
 
 This will prompt for your Gemini API key (get one at https://aistudio.google.com/apikey), validate it, let you pick a model, and save config to your user directory (`%APPDATA%\ccx\config.json` on Windows, `~/.config/ccx/config.json` on macOS/Linux). Config survives npm upgrades.
@@ -46,13 +46,13 @@ This will prompt for your Gemini API key (get one at https://aistudio.google.com
 Other init commands:
 
 ```bash
-ccx init --show    # print current config (key masked)
-ccx init --reset   # wipe config and start over
+ccx-init --show    # print current config (key masked)
+ccx-init --reset   # wipe config and start over
 ```
 
 ### Environment variable override
 
-You can skip `ccx init` and set env vars directly (useful for CI):
+You can skip `ccx-init` and set env vars directly (useful for CI):
 
 ```bash
 export GEMINI_API_KEY=AIza...
@@ -81,14 +81,14 @@ While the wrapped process is running:
 
 ### Changing the marker
 
-Change `CCX_MARKER` via `ccx init` or env var (default `;;`). No source changes needed.
+Change `CCX_MARKER` via `ccx-init` or env var (default `;;`). No source changes needed.
 
 ## Testing it locally
 
 1. `npm install`
-2. `npm run test` — runs `node --check` against the CLI entry point to catch syntax errors.
+2. `npm test` — runs the unit test suite (`node --test`) covering config loading, the Gemini client, and keystroke handling.
 3. `npm link`
-4. Set up `.env` with a real `GEMINI_API_KEY`.
+4. `ccx-init` — set up your real `GEMINI_API_KEY` (this validates the key and lets you pick a model live).
 5. Sanity-check the relay mechanics with a safe command first, before pointing it at `claude`:
 
    ```bash
@@ -97,9 +97,9 @@ Change `CCX_MARKER` via `ccx init` or env var (default `;;`). No source changes 
    ```
 
    You should see a completely normal shell. Type a sentence with a typo, e.g. `pls fix teh bug in server.js;;`,
-   then press **Enter**. You should see `[ccx] enhancing...` flash briefly, then the line rewritten in place
-   (e.g. `Please fix the bug in server.js`) with nothing submitted yet. Press Enter again to run it as a normal
-   shell command.
+   then press **Enter**. You should see a spinner flash briefly (`⠋ Enhancing prompt...`), then `✓ Enhanced`, then
+   the line rewritten in place (e.g. `Please fix the bug in server.js`) with nothing submitted yet. Press Enter
+   again to run it as a normal shell command.
 
 6. Once the mechanics check out, run it against the real target:
 
@@ -109,22 +109,18 @@ Change `CCX_MARKER` via `ccx init` or env var (default `;;`). No source changes 
 
 ## Known limitations
 
-- **Works best for single-line prompts typed straight through.** The line buffer is a plain JS string built up as
-  you type; it does not model cursor position.
-- **Heavy mid-line editing via arrow keys is not fully tracked.** Escape sequences (arrow keys, Home/End, etc.) are
-  detected and forwarded to the child untouched so navigation still *works* visually, but `ccx`'s internal buffer
-  does not move its own "cursor" — it only appends on printable input and pops on backspace. If you arrow back into
-  the middle of a line and start editing there, the buffer sent to Gemini (and the backspace count used to erase the
-  line) can drift out of sync with what's actually on screen. Worth testing carefully before relying on it for
-  heavily-edited multi-line pastes.
+- **Cursor position is tracked, including mid-line edits.** Left/Right/Home/End move an internal cursor that stays
+  in sync with inserts, backspace-at-cursor, and both plain-byte and win32-input-mode key encodings — so arrowing
+  back into the middle of a line and editing there is expected to work, including for the enhance trigger.
 - **Byte-wise, not codepoint-wise.** Input is processed one byte at a time; multi-byte UTF-8 characters (accents,
   emoji, non-Latin scripts) may not round-trip through the buffer correctly, though they are still forwarded to the
-  child untouched when you're not invoking the hotkey.
-- **Status line display is best-effort.** `ccx` uses ANSI save/restore-cursor sequences to show and clear the
-  `[ccx] enhancing...` message on its own line. This works in standard ANSI/VT terminals (including the VS Code
-  integrated terminal) but isn't guaranteed on every terminal emulator.
+  child untouched when you're not triggering enhancement.
+- **Status bar display is best-effort.** `ccx` draws the spinner/result to the last row of the terminal via ANSI
+  save/restore-cursor sequences. This works in standard ANSI/VT terminals (including the VS Code integrated
+  terminal) but isn't guaranteed on every terminal emulator, and a terminal resize mid-animation could leave a
+  stray line if the row count changes between draws.
 - **The marker itself is reserved.** If you genuinely need a prompt to end with `;;` literally, either add a
-  trailing space after it or change `CCX_MARKER` to something you don't otherwise type.
+  trailing space after it or change the marker to something you don't otherwise type (via `ccx-init` or `CCX_MARKER`).
 
 ## Windows-specific notes
 
