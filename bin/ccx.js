@@ -98,11 +98,23 @@ function stripAnsi(s) {
     .replace(/\r/g, '');
 }
 
+// Prefixes that indicate Claude Code UI output, not user content
+const UI_PREFIXES = ['>', '◆', '◇', '│', '└', '✓', '✗', '⚠', '?', '!', '·', '▸', '▶', '↓', '↑'];
+
+function isUiLine(t) {
+  if (UI_PREFIXES.some(p => t.startsWith(p))) return true;
+  // Claude Code spinner / status lines
+  if (/^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/.test(t)) return true;
+  // Lines that are mostly punctuation/symbols (borders, separators)
+  if (/^[-─═╌┄]{3,}$/.test(t)) return true;
+  return false;
+}
+
 ptyProcess.onData(data => {
   process.stdout.write(data);
   for (const ln of stripAnsi(data).split('\n')) {
     const t = ln.trim();
-    if (t.length > 12) { // skip echoed single chars and short noise
+    if (t.length > 12 && !isUiLine(t)) {
       contextLines.push(t);
       if (contextLines.length > CONTEXT_MAX) contextLines.shift();
     }
@@ -120,6 +132,11 @@ process.stdout.on('resize', () => {
 function eraseInput(line, cursor) {
   const parts = line.split('\n');
   if (parts.length > 1) {
+    // Move to end of last line first, then clear upward
+    const lastLineLen = parts[parts.length - 1].length;
+    const cursorOnLastLine = cursor - (line.length - lastLineLen);
+    const afterOnLast = lastLineLen - Math.max(0, cursorOnLastLine);
+    if (afterOnLast > 0) ptyProcess.write(`\x1b[${afterOnLast}C`);
     ptyProcess.write('\x1b[2K');
     for (let i = 1; i < parts.length; i++) ptyProcess.write('\x1b[1A\x1b[2K');
     ptyProcess.write('\x1b[G');

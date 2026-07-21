@@ -7,10 +7,15 @@ export class NetworkError extends Error {}
 const SYSTEM_PROMPT =
   'Rewrite the following text to be grammatically correct and clearer, ' +
   'while preserving its original intent and meaning exactly. ' +
-  'This is text typed into a terminal prompt — it may be one line or multiple lines. ' +
+  'This is text typed into a terminal prompt intended for an AI coding assistant — ' +
+  'preserve all technical terms, file paths, command names, code snippets, and ' +
+  'programming identifiers exactly as written. ' +
+  'It may be one line or multiple lines. ' +
   'Respond with EXACTLY ONE rewritten version preserving the same line structure and count. ' +
   'Do not offer multiple options or alternatives. Do not add headings, bullet ' +
   'points, markdown formatting, quotes, explanations, or any commentary. ' +
+  'If recent terminal context is provided before the text, use it only to clarify ' +
+  'abbreviations or references — do not include context content in the output. ' +
   'Output must contain nothing but the rewritten text itself.';
 
 function isGroq(apiKey) { return apiKey.startsWith('gsk_'); }
