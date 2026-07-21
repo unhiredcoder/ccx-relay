@@ -92,16 +92,18 @@ const contextLines = [];
 
 function stripAnsi(s) {
   return s
-    .replace(/\x1b\[[0-9;]*[A-Za-z]/g, '')
-    .replace(/\x1b\][^\x07]*\x07/g, '')
+    .replace(/\x1b\[[\d;?]*[A-Za-z]/g, '')  // CSI (including ?-prefixed private modes)
+    .replace(/\x1b\][^\x07]*\x07/g, '')       // OSC
+    .replace(/\x1b[()#;?][A-Za-z]/g, '')      // other 2-byte ESC sequences
     .replace(/\r/g, '');
 }
 
 ptyProcess.onData(data => {
   process.stdout.write(data);
   for (const ln of stripAnsi(data).split('\n')) {
-    if (ln.trim()) {
-      contextLines.push(ln.trim());
+    const t = ln.trim();
+    if (t.length > 12) { // skip echoed single chars and short noise
+      contextLines.push(t);
       if (contextLines.length > CONTEXT_MAX) contextLines.shift();
     }
   }
@@ -111,15 +113,20 @@ process.stdout.on('resize', () => {
   ptyProcess.resize(process.stdout.columns, process.stdout.rows);
 });
 
-// ── Erase current input via readline shortcuts ────────────────────────────────
-// Ctrl+E (go to end of line) + Ctrl+U (kill to start) = clear entire line.
-// Works regardless of visual wrapping — Claude Code's own readline handles it.
-// For multi-line: Backspace through the join, then kill each previous line.
-function eraseInput(line) {
-  const lineCount = line.split('\n').length;
-  ptyProcess.write('\x05\x15'); // Ctrl+E + Ctrl+U: clear last (or only) line
-  for (let i = 1; i < lineCount; i++) {
-    ptyProcess.write('\x7f\x05\x15'); // Backspace join + Ctrl+E + Ctrl+U
+// ── Erase current input ───────────────────────────────────────────────────────
+// Pure backspace approach — avoids Ctrl+U (\x15) which toggles Claude Code's
+// manual mode, and Ctrl+D (\x04) which sends EOF on empty lines.
+// For multi-line (Shift+Enter blocks): ANSI line-clear sequence per line.
+function eraseInput(line, cursor) {
+  const parts = line.split('\n');
+  if (parts.length > 1) {
+    ptyProcess.write('\x1b[2K');
+    for (let i = 1; i < parts.length; i++) ptyProcess.write('\x1b[1A\x1b[2K');
+    ptyProcess.write('\x1b[G');
+  } else {
+    const after = line.length - cursor;
+    if (after > 0) ptyProcess.write(`\x1b[${after}C`);
+    ptyProcess.write(Buffer.alloc(line.length, 0x7f));
   }
 }
 
@@ -150,7 +157,7 @@ const handler = createInputHandler({
       else if (err instanceof TimeoutError) msg = `Timed out after ${config.timeoutSeconds}s — original restored`;
       else if (err instanceof NetworkError) msg = 'No connection — original restored';
       await spinnerStop('error', msg);
-      eraseInput(line);
+      eraseInput(line, cursor);
       ptyProcess.write(toSend);
       handler.setBusy(false);
       handler.setLine(toSend);
