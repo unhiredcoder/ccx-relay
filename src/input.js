@@ -25,11 +25,13 @@ export function createInputHandler({ marker, onEnhance, onSubmit, onPassthrough,
   let lineBuffer = '';
   let cursor = 0;
   let busy = false;
+  let inPaste = false;
 
   function reset() {
     lineBuffer = '';
     cursor = 0;
     busy = false;
+    inPaste = false;
   }
 
   function setBusy(b) {
@@ -101,7 +103,7 @@ export function createInputHandler({ marker, onEnhance, onSubmit, onPassthrough,
           continue;
         }
 
-        // 3. Standard CSI sequences (arrows, Home, End, etc.)
+        // 3. Standard CSI sequences (arrows, Home, End, bracketed paste, etc.)
         const csi = parseCsiSeq(chunk, i);
         if (csi !== null) {
           if      (csi.final === 'D' && !csi.params) cursor = Math.max(0, cursor - 1);
@@ -110,6 +112,8 @@ export function createInputHandler({ marker, onEnhance, onSubmit, onPassthrough,
           else if (csi.final === 'F' && !csi.params) cursor = lineBuffer.length;
           else if (csi.final === '~' && csi.params === '1') cursor = 0;
           else if (csi.final === '~' && csi.params === '4') cursor = lineBuffer.length;
+          else if (csi.final === '~' && csi.params === '200') inPaste = true;
+          else if (csi.final === '~' && csi.params === '201') inPaste = false;
           onPassthrough(chunk.slice(i, i + csi.consumed));
           i += csi.consumed;
           continue;
@@ -119,7 +123,13 @@ export function createInputHandler({ marker, onEnhance, onSubmit, onPassthrough,
         onPassthrough(chunk.slice(i));
         return;
       } else if (byte === 0x0d) {
-        if (lineBuffer.endsWith(marker) && lineBuffer.trim().length > marker.length) {
+        if (inPaste) {
+          // Inside bracketed paste: CR = newline, accumulate
+          lineBuffer += '\n';
+          cursor = lineBuffer.length;
+          i++;
+          if (i < chunk.length && chunk[i] === 0x0a) i++; // skip CRLF's LF
+        } else if (lineBuffer.endsWith(marker) && lineBuffer.trim().length > marker.length) {
           onEnhance(lineBuffer, cursor);
           return;
         } else {
@@ -127,6 +137,15 @@ export function createInputHandler({ marker, onEnhance, onSubmit, onPassthrough,
           onPassthrough(Buffer.from([byte]));
           lineBuffer = '';
           cursor = 0;
+          i++;
+        }
+      } else if (byte === 0x0a) {
+        if (inPaste) {
+          // LF inside paste (after CR already handled, or standalone LF)
+          lineBuffer += '\n';
+          cursor = lineBuffer.length;
+        } else {
+          onPassthrough(Buffer.from([byte]));
         }
         i++;
       } else if (byte === 0x03) {

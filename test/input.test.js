@@ -160,6 +160,24 @@ test('enhance passes cursor position', () => {
   assert.equal(ev.cursor, 7);
 });
 
+test('bracketed paste: CRLF lines accumulate as newlines, ;; triggers enhance', () => {
+  const { h, events } = makeHandler();
+  // ESC[200~ starts paste, ESC[201~ ends paste
+  const pasteStart = Buffer.from('\x1b[200~');
+  const pasteEnd   = Buffer.from('\x1b[201~');
+  const content    = Buffer.from('line one\r\nline two\r\nfix this;;');
+  h.processChunk(pasteStart);
+  h.processChunk(content);
+  h.processChunk(pasteEnd);
+  // No enhance yet — paste end doesn't trigger
+  assert.equal(events.filter(e => e.type === 'enhance').length, 0);
+  // Plain Enter triggers enhance on full multi-line buffer
+  h.processChunk(Buffer.from([0x0d]));
+  const ev = events.find(e => e.type === 'enhance');
+  assert.ok(ev, 'should trigger enhance');
+  assert.equal(ev.line, 'line one\nline two\nfix this;;');
+});
+
 test('win32 Shift+Enter appends newline and accumulates multi-line buffer', () => {
   const { h, events } = makeHandler();
   h.processChunk(Buffer.from('line one'));
