@@ -91,11 +91,13 @@ async function runWizard() {
   process.stdout.write('  Fetching available models... ');
   try {
     const all = await listModels(key);
-    models = all.filter(m => m.includes('gemini')).slice(0, 10);
+    models = all.slice(0, 10);
     if (models.length === 0) throw new Error('empty');
     console.log(`\x1b[32m✓\x1b[0m ${models.length} found`);
   } catch (_) {
-    models = ['gemini-2.5-flash', 'gemini-1.5-flash', 'gemini-2.5-pro'];
+    models = key.startsWith('gsk_')
+      ? ['llama-3.1-8b-instant', 'llama-3.3-70b-versatile', 'gemma2-9b-it']
+      : ['gemini-2.5-flash', 'gemini-1.5-flash', 'gemini-2.5-pro'];
     console.log('(using defaults)');
   }
 
