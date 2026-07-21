@@ -111,18 +111,15 @@ process.stdout.on('resize', () => {
   ptyProcess.resize(process.stdout.columns, process.stdout.rows);
 });
 
-// ── Erase current input (single or multi-line) ────────────────────────────────
-function eraseInput(line, cursor) {
-  const parts = line.split('\n');
-  const extra = parts.length - 1;
-  if (extra === 0) {
-    const after = line.length - cursor;
-    if (after > 0) ptyProcess.write(`\x1b[${after}C`);
-    ptyProcess.write(Buffer.alloc(line.length, 0x7f));
-  } else {
-    ptyProcess.write('\x1b[2K');
-    for (let i = 0; i < extra; i++) ptyProcess.write('\x1b[1A\x1b[2K');
-    ptyProcess.write('\x1b[G');
+// ── Erase current input via readline shortcuts ────────────────────────────────
+// Ctrl+E (go to end of line) + Ctrl+U (kill to start) = clear entire line.
+// Works regardless of visual wrapping — Claude Code's own readline handles it.
+// For multi-line: Backspace through the join, then kill each previous line.
+function eraseInput(line) {
+  const lineCount = line.split('\n').length;
+  ptyProcess.write('\x05\x15'); // Ctrl+E + Ctrl+U: clear last (or only) line
+  for (let i = 1; i < lineCount; i++) {
+    ptyProcess.write('\x7f\x05\x15'); // Backspace join + Ctrl+E + Ctrl+U
   }
 }
 
@@ -153,7 +150,7 @@ const handler = createInputHandler({
       else if (err instanceof TimeoutError) msg = `Timed out after ${config.timeoutSeconds}s — original restored`;
       else if (err instanceof NetworkError) msg = 'No connection — original restored';
       await spinnerStop('error', msg);
-      eraseInput(line, cursor);
+      eraseInput(line);
       ptyProcess.write(toSend);
       handler.setBusy(false);
       handler.setLine(toSend);
