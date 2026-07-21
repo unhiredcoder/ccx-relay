@@ -3,8 +3,8 @@
 
 import { load } from '../src/config.js';
 import { enhance, RateLimitError, AuthError, ModelError, TimeoutError, NetworkError } from '../src/gemini.js';
-import { start as spinnerStart, stop as spinnerStop } from '../src/ui.js';
-import { openPopup } from '../src/popup.js';
+import { start as spinnerStart, stop as spinnerStop, clear as spinnerClear } from '../src/ui.js';
+import { createInputHandler } from '../src/input.js';
 
 const argv = process.argv.slice(2);
 
@@ -42,8 +42,8 @@ if (argv[0] === 'completion') {
     process.exit(1);
   }
   process.stdout.write(scripts[shell] + '\n');
-  if (shell === 'bash')       process.stdout.write('# eval "$(ccx completion bash)"\n');
-  else if (shell === 'zsh')   process.stdout.write('# eval "$(ccx completion zsh)"\n');
+  if (shell === 'bash')            process.stdout.write('# eval "$(ccx completion bash)"\n');
+  else if (shell === 'zsh')        process.stdout.write('# eval "$(ccx completion zsh)"\n');
   else if (shell === 'powershell') process.stdout.write('# Invoke-Expression (ccx completion powershell)\n');
   process.exit(0);
 }
@@ -111,67 +111,73 @@ process.stdout.on('resize', () => {
   ptyProcess.resize(process.stdout.columns, process.stdout.rows);
 });
 
-// ── Alt+M detection ────────────────────────────────────────────────────────────
-// Returns true if this chunk is an Alt+M keypress (standard or win32-input-mode).
-function isAltM(chunk) {
-  // Standard: ESC m (0x1b 0x6d)
-  if (chunk.length >= 2 && chunk[0] === 0x1b && chunk[1] === 0x6d) return true;
-  // Win32 input mode: ESC [ vk;sc;uc;kd;cs;rc _  where vk=77 (M), kd=1 (keydown), Alt bit in cs
-  if (chunk.length >= 2 && chunk[0] === 0x1b && chunk[1] === 0x5b) {
-    const m = chunk.toString('ascii').match(/^\x1b\[(\d+);\d+;\d+;(\d+);(\d+);\d+_/);
-    if (m) {
-      const vk = +m[1], kd = +m[2], cs = +m[3];
-      if (vk === 77 && kd === 1 && (cs & 0x0003) && !(cs & 0x000c)) return true;
-    }
+// ── Erase current input (single or multi-line) ────────────────────────────────
+function eraseInput(line, cursor) {
+  const parts = line.split('\n');
+  const extra = parts.length - 1;
+  if (extra === 0) {
+    const after = line.length - cursor;
+    if (after > 0) ptyProcess.write(`\x1b[${after}C`);
+    ptyProcess.write(Buffer.alloc(line.length, 0x7f));
+  } else {
+    ptyProcess.write('\x1b[2K');
+    for (let i = 0; i < extra; i++) ptyProcess.write('\x1b[1A\x1b[2K');
+    ptyProcess.write('\x1b[G');
   }
-  return false;
 }
 
-// ── Enhancement flow ───────────────────────────────────────────────────────────
-let busy = false;
-
-async function handleEnhance() {
-  busy = true;
-
-  const text = await openPopup();
-  if (!text) { busy = false; return; }
-
-  spinnerStart();
-  let improved;
-  try {
-    const context = contextLines.length > 0 ? contextLines.join('\n') : null;
-    improved = await enhance(text, config, context);
-  } catch (err) {
-    let msg = 'Enhancement failed';
-    if (err instanceof RateLimitError) msg = 'Quota exceeded';
-    else if (err instanceof AuthError)    msg = 'Invalid key — run ccx-init';
-    else if (err instanceof ModelError)   msg = 'Model not found — run ccx-init';
-    else if (err instanceof TimeoutError) msg = `Timed out after ${config.timeoutSeconds}s`;
-    else if (err instanceof NetworkError) msg = 'No connection';
-    await spinnerStop('error', msg);
-    busy = false;
-    return;
-  }
-
-  await spinnerStop('success', 'Enhanced');
-
-  // Clear any existing text in Claude Code's input line, then inject enhanced text
-  ptyProcess.write('\x15'); // Ctrl+U = kill line (clears Claude Code's current input)
-  // Small pause so Claude Code processes the Ctrl+U before we type the new text
-  await new Promise(r => setTimeout(r, 30));
-  ptyProcess.write(improved);
-  busy = false;
-}
-
-// ── Stdin routing ──────────────────────────────────────────────────────────────
+// ── Input handler ──────────────────────────────────────────────────────────────
 process.stdin.setRawMode(true);
 process.stdin.resume();
 
-process.stdin.on('data', chunk => {
-  if (busy) return; // swallow input during enhancement
-  if (isAltM(chunk)) { handleEnhance(); return; }
-  ptyProcess.write(chunk);
+const handler = createInputHandler({
+  marker: config.marker,
+
+  onEnhance: async (line, cursor) => {
+    const toSend = line.endsWith(config.marker)
+      ? line.slice(0, -config.marker.length)
+      : line;
+
+    handler.setBusy(true);
+    spinnerStart();
+
+    let improved;
+    try {
+      const context = contextLines.length > 0 ? contextLines.join('\n') : null;
+      improved = await enhance(toSend, config, context);
+    } catch (err) {
+      let msg = 'Enhancement failed';
+      if (err instanceof RateLimitError) msg = 'Quota exceeded';
+      else if (err instanceof AuthError)    msg = 'Invalid key — run ccx-init';
+      else if (err instanceof ModelError)   msg = 'Model not found — run ccx-init';
+      else if (err instanceof TimeoutError) msg = `Timed out after ${config.timeoutSeconds}s — original restored`;
+      else if (err instanceof NetworkError) msg = 'No connection — original restored';
+      await spinnerStop('error', msg);
+      eraseInput(line, cursor);
+      ptyProcess.write(toSend);
+      handler.setBusy(false);
+      handler.setLine(toSend);
+      return;
+    }
+
+    await spinnerStop('success', 'Enhanced');
+    eraseInput(line, cursor);
+    ptyProcess.write(improved);
+    handler.setBusy(false);
+    handler.setLine(improved);
+  },
+
+  onSubmit: () => {},
+
+  onPassthrough: (chunk) => ptyProcess.write(chunk),
+
+  onCtrlC: () => {
+    spinnerClear();
+    handler.reset();
+  },
 });
+
+process.stdin.on('data', chunk => handler.processChunk(chunk));
 
 // ── Cleanup ────────────────────────────────────────────────────────────────────
 function cleanupAndExit(code) {
