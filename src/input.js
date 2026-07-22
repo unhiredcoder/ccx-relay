@@ -21,21 +21,42 @@ function parseCsiSeq(chunk, i) {
   return { consumed: j + 1 - i, params, final };
 }
 
+// Windows Console API CONTROL_KEY_STATE flag (see README's win32-input-mode notes).
+const SHIFT_PRESSED = 0x0010;
+
 export function createInputHandler({ marker, onEnhance, onSubmit, onPassthrough, onCtrlC }) {
   let lineBuffer = '';
   let cursor = 0;
   let busy = false;
-  let inPaste = false;
+  let epoch = 0;
+  let pendingWhileBusy = [];
 
   function reset() {
     lineBuffer = '';
     cursor = 0;
     busy = false;
-    inPaste = false;
+    pendingWhileBusy = [];
+    epoch++;
+  }
+
+  // Invalidated by reset() (e.g. Ctrl+C) so a still-in-flight enhance that
+  // resolves afterward can tell its result is stale and discard it instead of
+  // writing over whatever the user has moved on to.
+  function isCurrent(token) {
+    return token === epoch;
   }
 
   function setBusy(b) {
+    const wasBusy = busy;
     busy = b;
+    // Replay input that arrived mid-enhancement now that the line has been
+    // updated — see processChunk's busy branch for why it's queued instead
+    // of forwarded live.
+    if (wasBusy && !b && pendingWhileBusy.length > 0) {
+      const queued = pendingWhileBusy;
+      pendingWhileBusy = [];
+      for (const buf of queued) processChunk(buf);
+    }
   }
 
   // Sync internal buffer after external rewrite (e.g. after enhancement)
@@ -45,7 +66,21 @@ export function createInputHandler({ marker, onEnhance, onSubmit, onPassthrough,
   }
 
   function processChunk(chunk) {
-    if (busy) { onPassthrough(chunk); return; }
+    if (busy) {
+      // A lone Ctrl+C still gets through immediately so the wrapped app (and
+      // the user) aren't stuck waiting on a hung enhance call. Everything
+      // else is queued rather than forwarded raw: forwarding live would let
+      // e.g. a mashed Alt+M reach the child unintercepted, silently editing
+      // its buffer in a way ccx's lineBuffer/cursor snapshot never sees —
+      // desyncing the erase-and-replace math once the enhance completes.
+      if (chunk.length === 1 && chunk[0] === 0x03) {
+        onCtrlC();
+        onPassthrough(chunk);
+        return;
+      }
+      pendingWhileBusy.push(Buffer.from(chunk));
+      return;
+    }
 
     let i = 0;
     while (i < chunk.length) {
@@ -57,12 +92,13 @@ export function createInputHandler({ marker, onEnhance, onSubmit, onPassthrough,
         if (seq !== null) {
           if (seq.kd === 1) {
             if (seq.vk === 13) {
-              if (seq.cs & 0x0010) {
-                // Shift+Enter: append newline, accumulate multi-line buffer
-                lineBuffer += '\n';
-                cursor = lineBuffer.length;
+              if (seq.cs & SHIFT_PRESSED) {
+                // Shift+Enter: soft line break in the wrapped app's own
+                // multi-line input, not a submit — keep composing.
+                lineBuffer = lineBuffer.slice(0, cursor) + '\n' + lineBuffer.slice(cursor);
+                cursor++;
               } else if (lineBuffer.endsWith(marker) && lineBuffer.trim().length > marker.length) {
-                onEnhance(lineBuffer, cursor);
+                onEnhance(lineBuffer, cursor, epoch);
                 return;
               } else {
                 onSubmit(lineBuffer);
@@ -83,7 +119,7 @@ export function createInputHandler({ marker, onEnhance, onSubmit, onPassthrough,
             } else if (seq.vk === 35) {
               cursor = lineBuffer.length;
             } else if (seq.vk === 77 && (seq.cs & (0x0001 | 0x0002)) && !(seq.cs & (0x0004 | 0x0008))) {
-              if (lineBuffer.length > 0) { onEnhance(lineBuffer, cursor); return; }
+              if (lineBuffer.length > 0) { onEnhance(lineBuffer, cursor, epoch); return; }
             }
           }
           onPassthrough(chunk.slice(i, i + seq.consumed));
@@ -94,7 +130,7 @@ export function createInputHandler({ marker, onEnhance, onSubmit, onPassthrough,
         // 2. Alt+M (ESC m)
         if (i + 1 < chunk.length && chunk[i + 1] === 0x6d) {
           if (lineBuffer.length > 0) {
-            onEnhance(lineBuffer, cursor);
+            onEnhance(lineBuffer, cursor, epoch);
             return;
           } else {
             onPassthrough(chunk.slice(i, i + 2));
@@ -103,7 +139,7 @@ export function createInputHandler({ marker, onEnhance, onSubmit, onPassthrough,
           continue;
         }
 
-        // 3. Standard CSI sequences (arrows, Home, End, bracketed paste, etc.)
+        // 3. Standard CSI sequences (arrows, Home, End, etc.)
         const csi = parseCsiSeq(chunk, i);
         if (csi !== null) {
           if      (csi.final === 'D' && !csi.params) cursor = Math.max(0, cursor - 1);
@@ -112,8 +148,6 @@ export function createInputHandler({ marker, onEnhance, onSubmit, onPassthrough,
           else if (csi.final === 'F' && !csi.params) cursor = lineBuffer.length;
           else if (csi.final === '~' && csi.params === '1') cursor = 0;
           else if (csi.final === '~' && csi.params === '4') cursor = lineBuffer.length;
-          else if (csi.final === '~' && csi.params === '200') inPaste = true;
-          else if (csi.final === '~' && csi.params === '201') inPaste = false;
           onPassthrough(chunk.slice(i, i + csi.consumed));
           i += csi.consumed;
           continue;
@@ -123,29 +157,14 @@ export function createInputHandler({ marker, onEnhance, onSubmit, onPassthrough,
         onPassthrough(chunk.slice(i));
         return;
       } else if (byte === 0x0d) {
-        if (inPaste) {
-          // Inside bracketed paste: CR = newline, accumulate
-          lineBuffer += '\n';
-          cursor = lineBuffer.length;
-          i++;
-          if (i < chunk.length && chunk[i] === 0x0a) i++; // skip CRLF's LF
-        } else if (lineBuffer.endsWith(marker) && lineBuffer.trim().length > marker.length) {
-          onEnhance(lineBuffer, cursor);
+        if (lineBuffer.endsWith(marker) && lineBuffer.trim().length > marker.length) {
+          onEnhance(lineBuffer, cursor, epoch);
           return;
         } else {
           onSubmit(lineBuffer);
           onPassthrough(Buffer.from([byte]));
           lineBuffer = '';
           cursor = 0;
-          i++;
-        }
-      } else if (byte === 0x0a) {
-        if (inPaste) {
-          // LF inside paste (after CR already handled, or standalone LF)
-          lineBuffer += '\n';
-          cursor = lineBuffer.length;
-        } else {
-          onPassthrough(Buffer.from([byte]));
         }
         i++;
       } else if (byte === 0x03) {
@@ -170,5 +189,5 @@ export function createInputHandler({ marker, onEnhance, onSubmit, onPassthrough,
     }
   }
 
-  return { processChunk, setBusy, reset, setLine };
+  return { processChunk, setBusy, reset, setLine, isCurrent };
 }
