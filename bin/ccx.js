@@ -137,25 +137,13 @@ function win32KeyEvent(vk, uc, keyDown, cs) {
 // Erase current input — handles both single-line and multi-line (Shift+Enter) buffers.
 // Safe: pure backspace/ANSI-clear only — no Ctrl+U (manual mode toggle) or Ctrl+D (EOF risk).
 function eraseInput(line, cursor) {
-  const cols = process.stdout.columns || 80;
-  const parts = line.split('\n');
-
-  // Move cursor to end of last logical part
-  const lastPart = parts[parts.length - 1];
-  const posOnLast = cursor - (line.length - lastPart.length);
-  const afterOnLast = lastPart.length - Math.max(0, posOnLast);
-  if (afterOnLast > 0) ptyProcess.write(`\x1b[${afterOnLast}C`);
-
-  // Count total terminal rows (each logical line may wrap; +2 for prompt prefix like "❯ ")
-  let termRows = 0;
-  for (const part of parts) {
-    termRows += Math.max(1, Math.ceil((part.length + 2) / cols));
-  }
-
-  // Clear current row, then move up and clear each additional row
-  ptyProcess.write('\x1b[2K');
-  for (let i = 1; i < termRows; i++) ptyProcess.write('\x1b[1A\x1b[2K');
-  ptyProcess.write('\x1b[G');
+  // Backspace is the ONLY reliable way to clear Claude Code's readline buffer.
+  // ANSI output sequences (ESC[2K, ESC[1A) go to Claude Code's stdin and are
+  // ignored — they are terminal output sequences, not input commands.
+  // Backspace works for both single-line and multi-line (readline merges lines).
+  const after = line.length - cursor;
+  if (after > 0) ptyProcess.write(`\x1b[${after}C`); // move cursor to end
+  ptyProcess.write(Buffer.alloc(line.length, 0x7f));   // backspace all chars
 }
 
 // A raw '\r'/'\n' byte written into the pty reads to the wrapped app as a plain
@@ -215,6 +203,9 @@ const handler = createInputHandler({
     writeTextPreservingLines(improved);
     handler.setLine(improved);
     handler.setBusy(false);
+    // Force Claude Code to redraw after writing — clears any visual artifacts
+    // from long lines that wrapped across multiple terminal rows.
+    setTimeout(() => ptyProcess.resize(process.stdout.columns, process.stdout.rows), 50);
   },
 
   onSubmit: (_line) => {},
