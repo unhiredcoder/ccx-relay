@@ -137,21 +137,25 @@ function win32KeyEvent(vk, uc, keyDown, cs) {
 // Erase current input — handles both single-line and multi-line (Shift+Enter) buffers.
 // Safe: pure backspace/ANSI-clear only — no Ctrl+U (manual mode toggle) or Ctrl+D (EOF risk).
 function eraseInput(line, cursor) {
+  const cols = process.stdout.columns || 80;
   const parts = line.split('\n');
-  if (parts.length > 1) {
-    // Move cursor to end of last line, then clear each line upward
-    const lastLen = parts[parts.length - 1].length;
-    const posOnLast = cursor - (line.length - lastLen);
-    const afterOnLast = lastLen - Math.max(0, posOnLast);
-    if (afterOnLast > 0) ptyProcess.write(`\x1b[${afterOnLast}C`);
-    ptyProcess.write('\x1b[2K');
-    for (let i = 1; i < parts.length; i++) ptyProcess.write('\x1b[1A\x1b[2K');
-    ptyProcess.write('\x1b[G');
-  } else {
-    const after = line.length - cursor;
-    if (after > 0) ptyProcess.write(`\x1b[${after}C`);
-    ptyProcess.write(Buffer.alloc(line.length, 0x7f));
+
+  // Move cursor to end of last logical part
+  const lastPart = parts[parts.length - 1];
+  const posOnLast = cursor - (line.length - lastPart.length);
+  const afterOnLast = lastPart.length - Math.max(0, posOnLast);
+  if (afterOnLast > 0) ptyProcess.write(`\x1b[${afterOnLast}C`);
+
+  // Count total terminal rows (each logical line may wrap; +2 for prompt prefix like "❯ ")
+  let termRows = 0;
+  for (const part of parts) {
+    termRows += Math.max(1, Math.ceil((part.length + 2) / cols));
   }
+
+  // Clear current row, then move up and clear each additional row
+  ptyProcess.write('\x1b[2K');
+  for (let i = 1; i < termRows; i++) ptyProcess.write('\x1b[1A\x1b[2K');
+  ptyProcess.write('\x1b[G');
 }
 
 // A raw '\r'/'\n' byte written into the pty reads to the wrapped app as a plain
