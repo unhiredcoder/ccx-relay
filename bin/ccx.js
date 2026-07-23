@@ -94,16 +94,26 @@ const contextLines = [];
 
 function stripAnsi(s) {
   return s
-    .replace(/\x1b\[[0-9;]*[A-Za-z]/g, '')
-    .replace(/\x1b\][^\x07]*\x07/g, '')
+    .replace(/\x1b\[[\d;?]*[A-Za-z]/g, '')  // CSI including ?-prefixed private modes
+    .replace(/\x1b\][^\x07]*\x07/g, '')       // OSC
+    .replace(/\x1b[()#;?][A-Za-z]/g, '')      // other 2-byte ESC sequences
     .replace(/\r/g, '');
+}
+
+const UI_PREFIXES = ['>', '◆', '◇', '│', '└', '✓', '✗', '⚠', '?', '!', '·', '▸', '▶', '↓', '↑'];
+function isUiLine(t) {
+  if (UI_PREFIXES.some(p => t.startsWith(p))) return true;
+  if (/^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/.test(t)) return true;
+  if (/^[-─═╌┄]{3,}$/.test(t)) return true;
+  return false;
 }
 
 ptyProcess.onData(data => {
   process.stdout.write(data);
-  for (const line of stripAnsi(data).split('\n')) {
-    if (line.trim()) {
-      contextLines.push(line.trim());
+  for (const ln of stripAnsi(data).split('\n')) {
+    const t = ln.trim();
+    if (t.length > 12 && !isUiLine(t)) {
+      contextLines.push(t);
       if (contextLines.length > CONTEXT_MAX) contextLines.shift();
     }
   }
@@ -122,6 +132,26 @@ const SHIFT_PRESSED = 0x0010;
 
 function win32KeyEvent(vk, uc, keyDown, cs) {
   return `\x1b[${vk};0;${uc};${keyDown ? 1 : 0};${cs};1_`;
+}
+
+// Erase current input — handles both single-line and multi-line (Shift+Enter) buffers.
+// Safe: pure backspace/ANSI-clear only — no Ctrl+U (manual mode toggle) or Ctrl+D (EOF risk).
+function eraseInput(line, cursor) {
+  const parts = line.split('\n');
+  if (parts.length > 1) {
+    // Move cursor to end of last line, then clear each line upward
+    const lastLen = parts[parts.length - 1].length;
+    const posOnLast = cursor - (line.length - lastLen);
+    const afterOnLast = lastLen - Math.max(0, posOnLast);
+    if (afterOnLast > 0) ptyProcess.write(`\x1b[${afterOnLast}C`);
+    ptyProcess.write('\x1b[2K');
+    for (let i = 1; i < parts.length; i++) ptyProcess.write('\x1b[1A\x1b[2K');
+    ptyProcess.write('\x1b[G');
+  } else {
+    const after = line.length - cursor;
+    if (after > 0) ptyProcess.write(`\x1b[${after}C`);
+    ptyProcess.write(Buffer.alloc(line.length, 0x7f));
+  }
 }
 
 // A raw '\r'/'\n' byte written into the pty reads to the wrapped app as a plain
@@ -169,10 +199,7 @@ const handler = createInputHandler({
       else if (err instanceof TimeoutError) msg = `Timed out after ${config.timeoutSeconds}s — original restored`;
       else if (err instanceof NetworkError) msg = 'No connection — original restored';
       await spinnerStop('error', msg);
-      // Move cursor to end of line then erase, restore original
-      const charsAfterCursor = line.length - cursor;
-      if (charsAfterCursor > 0) ptyProcess.write(`\x1b[${charsAfterCursor}C`);
-      ptyProcess.write(Buffer.alloc(line.length, 0x7f));
+      eraseInput(line, cursor);
       writeTextPreservingLines(toSend);
       handler.setLine(toSend);
       handler.setBusy(false);
@@ -180,10 +207,7 @@ const handler = createInputHandler({
     }
     if (!handler.isCurrent(token)) return;
     await spinnerStop('success', 'Enhanced');
-    // Move cursor to end of line then erase, write improved
-    const charsAfterCursor = line.length - cursor;
-    if (charsAfterCursor > 0) ptyProcess.write(`\x1b[${charsAfterCursor}C`);
-    ptyProcess.write(Buffer.alloc(line.length, 0x7f));
+    eraseInput(line, cursor);
     writeTextPreservingLines(improved);
     handler.setLine(improved);
     handler.setBusy(false);
